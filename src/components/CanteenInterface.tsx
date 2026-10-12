@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   Tablet, 
   Package, 
@@ -28,7 +28,8 @@ import {
   RotateCcw,
   Box,
   X,
-  ShieldAlert
+  ShieldAlert,
+  Fingerprint
 } from 'lucide-react';
 import { 
   MOCK_CANTEENS, 
@@ -43,7 +44,6 @@ import {
 import { Canteen, Item, Meal, DailyReadyMadeBatch } from '../types';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
-import BiometricReaderWidget from './BiometricReaderWidget';
 import { api } from '../lib/api';
 
 interface CanteenInterfaceProps {
@@ -160,6 +160,18 @@ const CanteenInterface: React.FC<CanteenInterfaceProps> = ({ onBackToDashboard }
   const [mealUserId, setMealUserId] = useState('');
   const [foundMealUser, setFoundMealUser] = useState<any | null>(null);
   const [recentMeals, setRecentMeals] = useState<any[]>([]);
+  const [mealSearchError, setMealSearchError] = useState<string | null>(null);
+  const [lastIssuedNotice, setLastIssuedNotice] = useState<{ user: string; meal: string; cost: number } | null>(null);
+  const mealInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus input when entering meals screen
+  useEffect(() => {
+    if (currentScreen === 'meals') {
+      setTimeout(() => {
+        mealInputRef.current?.focus();
+      }, 50);
+    }
+  }, [currentScreen]);
 
   // Ready-made items list from MOCK_ITEMS
   const readyMadeItems = useMemo(() => {
@@ -404,27 +416,25 @@ const CanteenInterface: React.FC<CanteenInterfaceProps> = ({ onBackToDashboard }
     setNewItem({ itemId: '', stock: 0, minLevel: 10 });
   };
 
-  const handleMealUserSearch = () => {
-    if (!mealUserId) return;
-    const user = MOCK_USERS.find(u => u.id.toLowerCase() === mealUserId.trim().toLowerCase());
+  const handleMealUserSearch = (searchQuery?: string) => {
+    const targetId = (searchQuery !== undefined ? searchQuery : mealUserId).trim();
+    if (!targetId) {
+      setMealSearchError('Please scan or enter an Employee ID.');
+      setFoundMealUser(null);
+      return;
+    }
+    const user = MOCK_USERS.find(u => u.id.toLowerCase() === targetId.toLowerCase());
     if (user) {
+      setMealUserId(user.id);
+      setMealSearchError(null);
       setFoundMealUser({
         ...user,
         eligibleMeals: [MOCK_MEALS[1]]
       });
     } else {
+      setMealSearchError(`Employee ID "${targetId}" not found in system.`);
       setFoundMealUser(null);
     }
-  };
-
-  // Called automatically when ZKTeco MB360 fingerprint reader registers a scan
-  const handleBiometricScan = (employee: { id: string; name: string; dept: string }) => {
-    setMealUserId(employee.id);
-    const fullUser = MOCK_USERS.find(u => u.id.toLowerCase() === employee.id.toLowerCase());
-    setFoundMealUser({
-      ...(fullUser || employee),
-      eligibleMeals: [MOCK_MEALS[1]]
-    });
   };
 
   const handleIssueMeal = async (meal: Meal) => {
@@ -441,21 +451,34 @@ const CanteenInterface: React.FC<CanteenInterfaceProps> = ({ onBackToDashboard }
       console.warn('Backend sync warning:', err);
     }
 
-    setRecentMeals(prev => [{
+    const issuedRecord = {
       id: Math.random().toString(36).substr(2, 9),
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       user: foundMealUser.name,
       dept: foundMealUser.dept,
       meal: meal.name,
       cost: meal.cost
-    }, ...prev].slice(0, 5));
+    };
 
-    setIssueStatus('success');
+    setRecentMeals(prev => [issuedRecord, ...prev].slice(0, 5));
+    setLastIssuedNotice({
+      user: foundMealUser.name,
+      meal: meal.name,
+      cost: meal.cost
+    });
+
+    setFoundMealUser(null);
+    setMealUserId('');
+    setMealSearchError(null);
+
+    // Auto-focus input for next employee scan
     setTimeout(() => {
-      setIssueStatus('idle');
-      setFoundMealUser(null);
-      setMealUserId('');
-    }, 2000);
+      mealInputRef.current?.focus();
+    }, 50);
+
+    setTimeout(() => {
+      setLastIssuedNotice(null);
+    }, 4000);
   };
 
   // Ready-Made Batches Summary Metrics
@@ -1651,75 +1674,172 @@ const CanteenInterface: React.FC<CanteenInterfaceProps> = ({ onBackToDashboard }
               exit={{ opacity: 0, y: -20 }}
               className="space-y-8"
             >
-              <div className="bg-white p-8 md:p-10 rounded-[2.5rem] shadow-xl shadow-slate-200/50 space-y-8 text-center">
-                {/* ZKTeco MB360 Hardware Listener Widget */}
-                <BiometricReaderWidget 
-                  onEmployeeIdentified={handleBiometricScan} 
-                  className="max-w-2xl mx-auto mb-6 text-left" 
-                />
-
-                <div className="space-y-4 max-w-md mx-auto">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">
-                      Or Manual Employee ID Search
-                    </label>
-                    <span className="text-[11px] text-slate-400">Press Enter or click Search</span>
+              <div className="bg-white p-8 md:p-10 rounded-[2.5rem] shadow-xl shadow-slate-200/50 space-y-8">
+                {/* Header */}
+                <div className="text-center max-w-xl mx-auto space-y-2">
+                  <div className="inline-flex p-3 bg-amber-100 text-amber-900 rounded-2xl mb-1">
+                    <Utensils size={28} />
                   </div>
-                  <div className="flex gap-3">
-                    <input 
-                      type="text" 
-                      value={mealUserId}
-                      onChange={(e) => setMealUserId(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleMealUserSearch()}
-                      placeholder="Employee ID (e.g. EMP001)..."
-                      className="w-full px-6 py-5 bg-slate-50 border-2 border-slate-100 rounded-3xl text-xl font-bold focus:border-amber-400 outline-none transition-all text-center"
-                    />
-                    <button 
-                      onClick={handleMealUserSearch}
-                      className="px-8 bg-amber-400 text-slate-900 rounded-3xl font-black hover:bg-amber-500 transition-all shadow-lg shadow-amber-400/20"
+                  <h2 className="text-2xl font-black text-slate-900">Meal Issuing Terminal</h2>
+                  <p className="text-sm font-medium text-slate-500">
+                    Capture Employee ID directly via fingerprint reader, barcode scan, or manual entry.
+                  </p>
+                </div>
+
+                {/* Successful Issue Notification Banner */}
+                <AnimatePresence>
+                  {lastIssuedNotice && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="max-w-xl mx-auto p-4 bg-emerald-50 border-2 border-emerald-300 rounded-2xl flex items-center justify-between text-emerald-900 shadow-sm"
                     >
-                      Search
-                    </button>
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-black">
+                          ✓
+                        </div>
+                        <div className="text-left">
+                          <p className="font-black text-sm">Meal Issued Successfully</p>
+                          <p className="text-xs text-emerald-800">
+                            {lastIssuedNotice.user} · {lastIssuedNotice.meal} (LKR {lastIssuedNotice.cost})
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-lg">
+                        Ready for next person
+                      </span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Single Capture Field */}
+                <div className="max-w-xl mx-auto space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-black text-slate-500 uppercase tracking-wider text-left">
+                        Employee / User ID
+                      </label>
+                      <span className="text-[11px] text-slate-400">Press Enter or click Search</span>
+                    </div>
+                    <div className="relative flex items-center">
+                      <div className="absolute left-5 text-slate-400 pointer-events-none">
+                        <Fingerprint size={24} />
+                      </div>
+                      <input 
+                        ref={mealInputRef}
+                        type="text" 
+                        value={mealUserId}
+                        onChange={(e) => {
+                          setMealUserId(e.target.value);
+                          if (mealSearchError) setMealSearchError(null);
+                        }}
+                        onKeyDown={(e) => e.key === 'Enter' && handleMealUserSearch()}
+                        placeholder="Scan fingerprint or enter Employee ID (e.g. EMP001)..."
+                        autoFocus
+                        className="w-full pl-14 pr-32 py-5 bg-slate-50 border-2 border-slate-200 rounded-2xl text-xl font-bold focus:border-amber-400 focus:bg-white focus:ring-4 focus:ring-amber-400/10 outline-none transition-all"
+                      />
+                      <button 
+                        type="button"
+                        onClick={() => handleMealUserSearch()}
+                        className="absolute right-3 px-5 py-3 bg-amber-400 hover:bg-amber-500 text-slate-900 rounded-xl font-black text-sm transition-all shadow-md shadow-amber-400/20"
+                      >
+                        Search
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Error banner if not found */}
+                  {mealSearchError && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold flex items-center gap-2 text-left">
+                      <AlertCircle size={16} className="shrink-0" />
+                      <span>{mealSearchError}</span>
+                    </div>
+                  )}
+
+                  {/* Quick test buttons while fingerprint hardware is not yet configured */}
+                  <div className="pt-2 text-left">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                        Quick Test IDs (For Testing)
+                      </span>
+                      <span className="text-[11px] text-slate-400">Click to simulate ID scan</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {MOCK_USERS.map(u => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => {
+                            setMealUserId(u.id);
+                            handleMealUserSearch(u.id);
+                          }}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-all border border-slate-200/60"
+                        >
+                          <span className="font-bold text-slate-900">{u.id}</span> ({u.name} · {u.dept})
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
+                {/* Found User and Eligible Meal Card */}
                 {foundMealUser && (
                   <motion.div 
-                    initial={{ opacity: 0, scale: 0.95 }}
+                    initial={{ opacity: 0, scale: 0.98 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className="space-y-8"
+                    className="max-w-xl mx-auto p-6 bg-slate-50 border-2 border-slate-200 rounded-3xl space-y-6 text-left"
                   >
-                    <div className="flex flex-col items-center">
-                      <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center text-4xl font-black text-slate-900 mb-4">
-                        {foundMealUser.name[0]}
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+                      <div className="flex items-center gap-4">
+                        <div className="w-14 h-14 bg-slate-900 text-white rounded-2xl flex items-center justify-center text-xl font-black">
+                          {foundMealUser.name[0]}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-xl font-black text-slate-900">{foundMealUser.name}</h4>
+                            <span className="px-2 py-0.5 bg-slate-200 text-slate-700 rounded text-xs font-mono font-bold">
+                              {foundMealUser.id}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">{foundMealUser.dept} Department</p>
+                        </div>
                       </div>
-                      <h4 className="text-3xl font-black text-slate-900">{foundMealUser.name}</h4>
-                      <p className="text-slate-500 font-bold uppercase tracking-widest">{foundMealUser.dept}</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFoundMealUser(null);
+                          setMealUserId('');
+                          mealInputRef.current?.focus();
+                        }}
+                        className="text-xs font-bold text-slate-400 hover:text-slate-600 px-3 py-1.5 rounded-lg hover:bg-slate-200 transition-all"
+                      >
+                        Clear
+                      </button>
                     </div>
 
-                    <div className="space-y-4">
-                      <p className="text-sm font-black text-slate-400 uppercase tracking-wider">Eligible Meals for Current Time</p>
-                      <div className="grid grid-cols-1 gap-4">
-                        {foundMealUser.eligibleMeals.map((meal: Meal) => (
-                          <div key={meal.id} className="p-8 bg-emerald-50 border-2 border-emerald-200 rounded-[2rem] flex items-center justify-between">
-                            <div className="flex items-center gap-6">
-                              <div className="w-16 h-16 bg-emerald-500 text-white rounded-2xl flex items-center justify-center">
-                                <Utensils size={32} />
-                              </div>
-                              <div className="text-left">
-                                <h5 className="text-2xl font-black text-slate-900">{meal.name}</h5>
-                                <p className="text-emerald-700 font-bold">Window: {meal.eligibleFrom} - {meal.eligibleTo}</p>
-                              </div>
+                    <div className="space-y-3">
+                      <p className="text-xs font-black text-slate-400 uppercase tracking-wider">Eligible Meal for Current Window</p>
+                      {foundMealUser.eligibleMeals.map((meal: Meal) => (
+                        <div key={meal.id} className="p-5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between shadow-sm">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-amber-400 text-slate-900 rounded-xl flex items-center justify-center font-bold">
+                              <Utensils size={24} />
                             </div>
-                            <button 
-                              onClick={() => handleIssueMeal(meal)}
-                              className="px-10 py-5 bg-slate-900 text-white rounded-2xl font-black text-lg hover:bg-slate-800 transition-all shadow-xl"
-                            >
-                              Issue Meal
-                            </button>
+                            <div>
+                              <h5 className="text-lg font-black text-slate-900">{meal.name}</h5>
+                              <p className="text-xs text-slate-500 font-medium">Window: {meal.eligibleFrom} - {meal.eligibleTo} · Cost: LKR {meal.cost}</p>
+                            </div>
                           </div>
-                        ))}
-                      </div>
+                          <button 
+                            type="button"
+                            onClick={() => handleIssueMeal(meal)}
+                            className="px-6 py-3 bg-slate-900 text-white hover:bg-emerald-600 rounded-xl font-black text-sm transition-all shadow-md"
+                          >
+                            Confirm & Issue
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </motion.div>
                 )}

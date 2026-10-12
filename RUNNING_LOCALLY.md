@@ -75,40 +75,29 @@ Both the **Express REST API backend** (`/api/*`) and the **React frontend** run 
 
 ---
 
-## 3. ZKTeco MB360 Biometric Reader Integration
+## 3. How "Issue Meals" Works
 
-### Hardware Specifications
-- **Device Model**: ZKTeco MB360 (Multi-Biometric Time Attendance & Access Control)
-- **Modalities**: Fingerprint, Facial Recognition, RFID ID Card, PIN
-- **Default Port**: `4370` (TCP/UDP)
-- **Comm Key**: `0` (default)
+### How it works right now (Without Fingerprint Machine Configured):
+1. Navigate to **Canteen Terminal** → **Issue Meals**.
+2. There is a single, clean input field: **Employee / User ID**.
+3. You can type an Employee ID (e.g. `EMP001`, `EMP002`, `EMP003`, `EMP004`) or click any of the **Quick Test ID** chips provided under the field.
+4. Press **Enter** or click **Search**:
+   - The system queries the employee record to verify their name and department.
+   - It checks meal eligibility for the current meal window (e.g., Lunch - 12:00 to 14:30).
+5. Click **Confirm & Issue**:
+   - The transaction is recorded in the backend store (`POST /api/transactions/issue-meal`).
+   - The transaction logs the date, timestamp, employee, department, and meal cost (LKR 250).
+   - An instant confirmation banner confirms the meal was issued.
+   - The input field automatically clears and re-focuses, ready for the next person.
 
-### How It Works
-
-```
-+---------------------+           +---------------------+           +---------------------+
-|  ZKTeco MB360 Device|  TCP:4370 | Express Backend     |   SSE     | Browser POS Terminal|
-|  (Local LAN IP)     | --------> | (zktecoService.ts)  | --------> | (Biometric Widget)  |
-|  Employee scans     |           | Resolves User ID    |           | Auto-populates emp# |
-|  fingerprint        |           | from enrolled DB    |           | & validates meal    |
-+---------------------+           +---------------------+           +---------------------+
-```
-
-### Physical Connection Steps:
-1. **Network Cable**: Connect the MB360 to your local router or switch using a standard Ethernet cable (CAT5/CAT6).
-2. **Assign Static IP on MB360**:
-   - On the device physical keypad, press **M/OK** to enter the menu.
-   - Go to **Comm.** > **Ethernet**.
-   - Set **IP Address**: e.g., `192.168.1.201` (ensure this matches your subnet).
-   - Set **Subnet Mask**: `255.255.255.0`.
-   - Set **Gateway**: e.g., `192.168.1.1`.
-3. **Configure the Web App**:
-   - In the **Issue Meals** screen or the **Biometric Reader Widget**, click the ⚙️ **Settings** icon.
-   - Enter your device's IP (e.g., `192.168.1.201`) and Port (`4370`).
-   - Click **Save & Apply**.
-4. **Testing Without Hardware**:
-   - Use the built-in **Test Finger Scan** button or select any enrolled employee from the dropdown.
-   - The system immediately simulates the exact punch packet and verifies meal eligibility.
+### How it works when you connect your Fingerprint Machine:
+- **Zero Technical Clutter on the POS Screen**: Canteen staff never need to see IP addresses, ports, or hardware diagnostics.
+- **Direct ID Capture**: In real-world canteen environments, fingerprint scanners (USB biometric readers, barcode scanners, or attendance terminals with keyboard emulation) operate in **HID / Keyboard Wedge mode**.
+- When an employee places their finger on the reader:
+  1. The fingerprint machine verifies the biometric template and outputs the corresponding Employee ID (e.g., `EMP001`) into the focused field.
+  2. The reader automatically sends an `Enter` key signal.
+  3. The system instantly resolves the employee and displays their eligible meal card for 1-click confirmation or auto-issuance.
+- If using an Ethernet-based device, the device IP is configured in `.env` / backend service; canteen staff only ever interact with the clean User ID field.
 
 ---
 
