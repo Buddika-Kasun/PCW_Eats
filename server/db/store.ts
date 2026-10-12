@@ -13,6 +13,9 @@
  * - Modular helper functions allow easy expansion to PostgreSQL or SQLite.
  */
 
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { 
   Item, 
   Meal, 
@@ -21,6 +24,10 @@ import {
   Canteen, 
   DailyReadyMadeBatch 
 } from '../../src/types';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.resolve(__dirname, '../..');
 
 export interface User {
   id: string;
@@ -82,8 +89,77 @@ class DataStore {
   public deptBalances: Record<string, Record<string, number>> = {};
   public biometricLogs: BiometricLog[] = [];
 
+  private getDataFilePath(): string {
+    const configuredPath = process.env.DATA_FILE_PATH || './data/pcw-eats-data.json';
+    return path.resolve(projectRoot, configuredPath);
+  }
+
+  public persistState(): void {
+    try {
+      const dataFilePath = this.getDataFilePath();
+      const directory = path.dirname(dataFilePath);
+      fs.mkdirSync(directory, { recursive: true });
+
+      const snapshot = {
+        items: this.items,
+        meals: this.meals,
+        quotas: this.quotas,
+        deptQuotaMaps: this.deptQuotaMaps,
+        canteens: this.canteens,
+        inventory: this.inventory,
+        dailyBatches: this.dailyBatches,
+        users: this.users,
+        transactions: this.transactions,
+        deptBalances: this.deptBalances,
+        biometricLogs: this.biometricLogs,
+      };
+
+      fs.writeFileSync(dataFilePath, JSON.stringify(snapshot, null, 2), 'utf-8');
+    } catch (error) {
+      console.error('Failed to persist PCW Eats data snapshot:', error);
+    }
+  }
+
+  private hydrateFromFile(): boolean {
+    try {
+      const dataFilePath = this.getDataFilePath();
+      if (!fs.existsSync(dataFilePath)) {
+        return false;
+      }
+
+      const raw = fs.readFileSync(dataFilePath, 'utf-8');
+      if (!raw.trim()) {
+        return false;
+      }
+
+      const snapshot = JSON.parse(raw) as Partial<Record<'items' | 'meals' | 'quotas' | 'deptQuotaMaps' | 'canteens' | 'inventory' | 'dailyBatches' | 'users' | 'transactions' | 'deptBalances' | 'biometricLogs', any>>;
+
+      this.items = Array.isArray(snapshot.items) ? snapshot.items : [];
+      this.meals = Array.isArray(snapshot.meals) ? snapshot.meals : [];
+      this.quotas = Array.isArray(snapshot.quotas) ? snapshot.quotas : [];
+      this.deptQuotaMaps = Array.isArray(snapshot.deptQuotaMaps) ? snapshot.deptQuotaMaps : [];
+      this.canteens = Array.isArray(snapshot.canteens) ? snapshot.canteens : [];
+      this.inventory = Array.isArray(snapshot.inventory) ? snapshot.inventory : [];
+      this.dailyBatches = Array.isArray(snapshot.dailyBatches) ? snapshot.dailyBatches : [];
+      this.users = Array.isArray(snapshot.users) ? snapshot.users : [];
+      this.transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
+      this.deptBalances = snapshot.deptBalances && typeof snapshot.deptBalances === 'object' ? snapshot.deptBalances : {};
+      this.biometricLogs = Array.isArray(snapshot.biometricLogs) ? snapshot.biometricLogs : [];
+
+      const hasState = this.items.length > 0 || this.meals.length > 0 || this.canteens.length > 0 || this.transactions.length > 0;
+      return hasState;
+    } catch (error) {
+      console.warn('Could not hydrate PCW Eats data from disk. Falling back to seeded defaults.', error);
+      return false;
+    }
+  }
+
   constructor() {
-    this.seedInitialData();
+    const hydrated = this.hydrateFromFile();
+    if (!hydrated) {
+      this.seedInitialData();
+      this.persistState();
+    }
   }
 
   /**
