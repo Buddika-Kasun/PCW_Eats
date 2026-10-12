@@ -13,9 +13,6 @@
  * - Modular helper functions allow easy expansion to PostgreSQL or SQLite.
  */
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { 
   Item, 
   Meal, 
@@ -24,10 +21,7 @@ import {
   Canteen, 
   DailyReadyMadeBatch 
 } from '../../src/types';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const projectRoot = path.resolve(__dirname, '../..');
+import { appDatabase } from './sqlite';
 
 export interface User {
   id: string;
@@ -89,73 +83,268 @@ class DataStore {
   public deptBalances: Record<string, Record<string, number>> = {};
   public biometricLogs: BiometricLog[] = [];
 
-  private getDataFilePath(): string {
-    const configuredPath = process.env.DATA_FILE_PATH || './data/pcw-eats-data.json';
-    return path.resolve(projectRoot, configuredPath);
+  private truncateTable(tableName: string): void {
+    appDatabase.exec(`DELETE FROM ${tableName}`);
+  }
+
+  private replaceTable<T>(tableName: string, columns: readonly string[], rows: T[], mapper: (row: T) => unknown[]): void {
+    this.truncateTable(tableName);
+
+    if (!rows.length) {
+      return;
+    }
+
+    const placeholders = rows.map(() => `(${Array.from({ length: columns.length }, () => '?').join(', ')})`).join(', ');
+    const statement = appDatabase.prepare(`INSERT INTO ${tableName} (${columns.join(', ')}) VALUES ${placeholders}`);
+    const params: unknown[] = [];
+
+    for (const row of rows) {
+      params.push(...mapper(row));
+    }
+
+    statement.run(...params);
+  }
+
+  private readTable<T>(tableName: string, mapper: (row: any) => T): T[] {
+    const rows = appDatabase.prepare(`SELECT * FROM ${tableName}`).all() as any[];
+    return rows.map(mapper);
   }
 
   public persistState(): void {
     try {
-      const dataFilePath = this.getDataFilePath();
-      const directory = path.dirname(dataFilePath);
-      fs.mkdirSync(directory, { recursive: true });
+      appDatabase.exec('BEGIN IMMEDIATE');
 
-      const snapshot = {
-        items: this.items,
-        meals: this.meals,
-        quotas: this.quotas,
-        deptQuotaMaps: this.deptQuotaMaps,
-        canteens: this.canteens,
-        inventory: this.inventory,
-        dailyBatches: this.dailyBatches,
-        users: this.users,
-        transactions: this.transactions,
-        deptBalances: this.deptBalances,
-        biometricLogs: this.biometricLogs,
-      };
+      try {
+        this.replaceTable('items', ['id', 'code', 'name', 'uom', 'price', 'category', 'shelf_life'], this.items, (item) => [
+          item.id,
+          item.code,
+          item.name,
+          item.uom,
+          item.price,
+          item.category ?? 'stock-keeping',
+          item.shelfLife ?? 'perpetual',
+        ]);
 
-      fs.writeFileSync(dataFilePath, JSON.stringify(snapshot, null, 2), 'utf-8');
+        this.replaceTable('meals', ['id', 'code', 'name', 'cost', 'eligible_from', 'eligible_to'], this.meals, (meal) => [
+          meal.id,
+          meal.code,
+          meal.name,
+          meal.cost,
+          meal.eligibleFrom,
+          meal.eligibleTo,
+        ]);
+
+        this.replaceTable('quotas', ['id', 'code', 'items_json'], this.quotas, (quota) => [
+          quota.id,
+          quota.code,
+          JSON.stringify(quota.items),
+        ]);
+
+        this.replaceTable('dept_quota_maps', ['id', 'department', 'effective_from', 'quota_id'], this.deptQuotaMaps, (map) => [
+          map.id,
+          map.department,
+          map.effectiveFrom,
+          map.quotaId,
+        ]);
+
+        this.replaceTable('canteens', ['id', 'code', 'name', 'type'], this.canteens, (canteen) => [
+          canteen.id,
+          canteen.code,
+          canteen.name,
+          canteen.type,
+        ]);
+
+        this.replaceTable('inventory', ['id', 'item_id', 'item', 'uom', 'stock', 'min_level', 'status'], this.inventory, (record) => [
+          record.id,
+          record.itemId,
+          record.item,
+          record.uom,
+          record.stock,
+          record.minLevel,
+          record.status,
+        ]);
+
+        this.replaceTable('daily_batches', ['id', 'item_id', 'item_name', 'date', 'delivery_time', 'received_qty', 'issued_qty', 'remaining_qty', 'unit_price', 'status', 'cleared_at', 'waste_qty'], this.dailyBatches, (batch) => [
+          batch.id,
+          batch.itemId,
+          batch.itemName,
+          batch.date,
+          batch.deliveryTime ?? null,
+          batch.receivedQty,
+          batch.issuedQty,
+          batch.remainingQty,
+          batch.unitPrice,
+          batch.status,
+          batch.clearedAt ?? null,
+          batch.wasteQty ?? null,
+        ]);
+
+        this.replaceTable('users', ['id', 'name', 'dept', 'role', 'fingerprint_enrolled', 'biometric_card_no'], this.users, (user) => [
+          user.id,
+          user.name,
+          user.dept,
+          user.role,
+          user.fingerprintEnrolled ? 1 : 0,
+          user.biometricCardNo ?? null,
+        ]);
+
+        this.replaceTable('transactions', ['id', 'date', 'time', 'dept', 'item', 'qty', 'cost', 'type', 'category', 'user_id', 'user_name', 'canteen_id'], this.transactions, (tx) => [
+          tx.id,
+          tx.date,
+          tx.time ?? null,
+          tx.dept,
+          tx.item,
+          tx.qty,
+          tx.cost,
+          tx.type,
+          tx.category ?? null,
+          tx.userId ?? null,
+          tx.userName ?? null,
+          tx.canteenId ?? null,
+        ]);
+
+        this.replaceTable('dept_balances', ['department', 'value'], Object.entries(this.deptBalances).map(([department, balances]) => ({ department, value: JSON.stringify(balances) })), (entry) => [
+          entry.department,
+          entry.value,
+        ]);
+
+        this.replaceTable('biometric_logs', ['id', 'employee_no', 'employee_name', 'department', 'timestamp', 'device_id', 'device_ip', 'verification_mode', 'status'], this.biometricLogs, (log) => [
+          log.id,
+          log.employeeNo,
+          log.employeeName,
+          log.department,
+          log.timestamp,
+          log.deviceId,
+          log.deviceIp,
+          log.verificationMode,
+          log.status,
+        ]);
+
+        appDatabase.exec('COMMIT');
+      } catch (error) {
+        appDatabase.exec('ROLLBACK');
+        throw error;
+      }
     } catch (error) {
-      console.error('Failed to persist PCW Eats data snapshot:', error);
+      console.error('Failed to persist PCW Eats state to SQLite:', error);
     }
   }
 
-  private hydrateFromFile(): boolean {
+  private hydrateFromDatabase(): boolean {
     try {
-      const dataFilePath = this.getDataFilePath();
-      if (!fs.existsSync(dataFilePath)) {
+      const itemRows = this.readTable('items', (row) => ({
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        uom: row.uom,
+        price: Number(row.price),
+        category: row.category ?? 'stock-keeping',
+        shelfLife: row.shelf_life ?? 'perpetual',
+      }));
+      const mealRows = this.readTable('meals', (row) => ({
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        cost: Number(row.cost),
+        eligibleFrom: row.eligible_from,
+        eligibleTo: row.eligible_to,
+      }));
+
+      if (!itemRows.length && !mealRows.length) {
         return false;
       }
 
-      const raw = fs.readFileSync(dataFilePath, 'utf-8');
-      if (!raw.trim()) {
-        return false;
-      }
-
-      const snapshot = JSON.parse(raw) as Partial<Record<'items' | 'meals' | 'quotas' | 'deptQuotaMaps' | 'canteens' | 'inventory' | 'dailyBatches' | 'users' | 'transactions' | 'deptBalances' | 'biometricLogs', any>>;
-
-      this.items = Array.isArray(snapshot.items) ? snapshot.items : [];
-      this.meals = Array.isArray(snapshot.meals) ? snapshot.meals : [];
-      this.quotas = Array.isArray(snapshot.quotas) ? snapshot.quotas : [];
-      this.deptQuotaMaps = Array.isArray(snapshot.deptQuotaMaps) ? snapshot.deptQuotaMaps : [];
-      this.canteens = Array.isArray(snapshot.canteens) ? snapshot.canteens : [];
-      this.inventory = Array.isArray(snapshot.inventory) ? snapshot.inventory : [];
-      this.dailyBatches = Array.isArray(snapshot.dailyBatches) ? snapshot.dailyBatches : [];
-      this.users = Array.isArray(snapshot.users) ? snapshot.users : [];
-      this.transactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
-      this.deptBalances = snapshot.deptBalances && typeof snapshot.deptBalances === 'object' ? snapshot.deptBalances : {};
-      this.biometricLogs = Array.isArray(snapshot.biometricLogs) ? snapshot.biometricLogs : [];
+      this.items = itemRows;
+      this.meals = mealRows;
+      this.quotas = this.readTable('quotas', (row) => ({
+        id: row.id,
+        code: row.code,
+        items: JSON.parse(row.items_json),
+      }));
+      this.deptQuotaMaps = this.readTable('dept_quota_maps', (row) => ({
+        id: row.id,
+        department: row.department,
+        effectiveFrom: row.effective_from,
+        quotaId: row.quota_id,
+      }));
+      this.canteens = this.readTable('canteens', (row) => ({
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        type: row.type,
+      }));
+      this.inventory = this.readTable('inventory', (row) => ({
+        id: row.id,
+        itemId: row.item_id,
+        item: row.item,
+        uom: row.uom,
+        stock: Number(row.stock),
+        minLevel: Number(row.min_level),
+        status: row.status,
+      }));
+      this.dailyBatches = this.readTable('daily_batches', (row) => ({
+        id: row.id,
+        itemId: row.item_id,
+        itemName: row.item_name,
+        date: row.date,
+        deliveryTime: row.delivery_time ?? undefined,
+        receivedQty: Number(row.received_qty),
+        issuedQty: Number(row.issued_qty),
+        remainingQty: Number(row.remaining_qty),
+        unitPrice: Number(row.unit_price),
+        status: row.status,
+        clearedAt: row.cleared_at ?? undefined,
+        wasteQty: row.waste_qty ?? undefined,
+      }));
+      this.users = this.readTable('users', (row) => ({
+        id: row.id,
+        name: row.name,
+        dept: row.dept,
+        role: row.role,
+        fingerprintEnrolled: Boolean(row.fingerprint_enrolled),
+        biometricCardNo: row.biometric_card_no ?? undefined,
+      }));
+      this.transactions = this.readTable('transactions', (row) => ({
+        id: row.id,
+        date: row.date,
+        time: row.time ?? undefined,
+        dept: row.dept,
+        item: row.item,
+        qty: Number(row.qty),
+        cost: Number(row.cost),
+        type: row.type,
+        category: row.category ?? undefined,
+        userId: row.user_id ?? undefined,
+        userName: row.user_name ?? undefined,
+        canteenId: row.canteen_id ?? undefined,
+      }));
+      const deptRows = this.readTable('dept_balances', (row) => ({
+        department: row.department,
+        balances: JSON.parse(row.value),
+      }));
+      this.deptBalances = Object.fromEntries(deptRows.map((row) => [row.department, row.balances]));
+      this.biometricLogs = this.readTable('biometric_logs', (row) => ({
+        id: row.id,
+        employeeNo: row.employee_no,
+        employeeName: row.employee_name,
+        department: row.department,
+        timestamp: row.timestamp,
+        deviceId: row.device_id,
+        deviceIp: row.device_ip,
+        verificationMode: row.verification_mode,
+        status: row.status,
+      }));
 
       const hasState = this.items.length > 0 || this.meals.length > 0 || this.canteens.length > 0 || this.transactions.length > 0;
       return hasState;
     } catch (error) {
-      console.warn('Could not hydrate PCW Eats data from disk. Falling back to seeded defaults.', error);
+      console.warn('Could not hydrate PCW Eats state from SQLite. Falling back to seed data.', error);
       return false;
     }
   }
 
   constructor() {
-    const hydrated = this.hydrateFromFile();
+    const hydrated = this.hydrateFromDatabase();
     if (!hydrated) {
       this.seedInitialData();
       this.persistState();
