@@ -1,0 +1,7 @@
+{
+  "name": "PCW Eats",
+  "description": "A comprehensive canteen ERP system for managing items, meals, quotas, inventory, and real-time canteen operations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
