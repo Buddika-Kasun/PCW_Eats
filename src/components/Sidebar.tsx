@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { View } from "../types";
+import { getCachedUser, logout } from "../lib/auth";
 
 interface SidebarProps {
   currentView: View;
@@ -25,6 +26,31 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange }) => {
+  const user = getCachedUser();
+
+  console.log("Sidebar user:", user);
+
+  const displayName =
+    user?.displayname?.trim() ||
+    user?.username?.trim() ||
+    user?.email ||
+    "User";
+
+  const displayRole = user?.role
+    ? user.role.charAt(0).toUpperCase() + user.role.slice(1).toLowerCase()
+    : "Signed in";
+
+  const initials =
+    displayName
+      .split(/[\s._-]+/)
+      .filter(Boolean)
+      .map((w) => w[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "?";
+
+  const profilePicture = user?.profilePicture as string | null | undefined;
+
   const menuItems = [
     {
       id: "admin-dashboard",
@@ -72,7 +98,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange }) => {
         </div>
       </div>
 
-      {/* <nav className="flex-1 px-4 py-4 space-y-8 overflow-y-auto"> */}
       <nav
         className="flex-1 px-4 py-4 mr-0.5 space-y-8 overflow-y-auto 
   [&::-webkit-scrollbar]:w-1.5 
@@ -118,15 +143,33 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange }) => {
 
       <div className="p-4 border-t border-slate-800 space-y-3">
         <div className="flex items-center gap-3 px-3 py-3 rounded-xl bg-slate-800/50">
-          <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">
-            LF
-          </div>
+          {profilePicture ? (
+            <img
+              src={profilePicture}
+              alt={displayName}
+              className="w-8 h-8 rounded-full object-cover shrink-0"
+            />
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold shrink-0">
+              {initials}
+            </div>
+          )}
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">Lakshitha F.</p>
-            <p className="text-[10px] text-slate-500 truncate">System Admin</p>
+            <p className="text-sm font-medium truncate" title={displayName}>
+              {displayName}
+            </p>
+            <p
+              className="text-[10px] text-slate-500 truncate"
+              title={user?.email}
+            >
+              {displayRole}
+            </p>
           </div>
         </div>
-        <button className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-slate-400 hover:text-red-400 transition-colors">
+        <button
+          onClick={logout}
+          className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-slate-400 hover:text-red-400 transition-colors cursor-pointer"
+        >
           <LogOut size={18} />
           <span>Sign Out</span>
         </button>
