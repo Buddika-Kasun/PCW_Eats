@@ -1,0 +1,15 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+*.log
+.git
+.gitignore
+.vscode
+.idea
+server/db/sqlite.ts
+server/db/store copy.ts
+skills-lock.json
+RUNNING_LOCALLY.md
+metadata.json

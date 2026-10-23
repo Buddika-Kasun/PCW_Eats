@@ -1,0 +1,12 @@
+{
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "preDeployCommand": "npx prisma migrate deploy",
+    "startCommand": "npx tsx server.ts",
+    "healthcheckPath": "/api/health",
+    "healthcheckTimeout": 120
+  }
+}
