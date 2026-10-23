@@ -23,6 +23,7 @@ const __dirname = path.dirname(__filename);
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
+  const APP_URL = process.env.APP_URL || `http://localhost`;
   const isProduction = process.env.NODE_ENV === "production";
 
   const PCW_RIDE_API_URL =
@@ -202,8 +203,8 @@ async function startServer() {
 
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log("====================================================");
-    console.log(`🚀 PCW Eats Server running on http://localhost:${PORT}`);
-    console.log(`📡 API Endpoints live at http://localhost:${PORT}/api`);
+    console.log(`🚀 PCW Eats Server running on ${APP_URL}:${PORT}`);
+    console.log(`📡 API Endpoints live at ${APP_URL}:${PORT}/api`);
     console.log(`🫆 ZKTeco MB360 Bridge online at /api/zkteco`);
     console.log(`🔗 PCW Ride backend: ${PCW_RIDE_API_URL}`);
     console.log("====================================================");
