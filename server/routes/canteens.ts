@@ -1,36 +1,52 @@
 /**
  * ============================================================================
- * Canteen Management Routes (/api/canteens)
+ * Canteen Management Routes (/api/canteens) — Prisma/PostgreSQL
  * ============================================================================
  * Manages physical canteen locations and POS terminals.
  */
 
-import { Router, Request, Response } from 'express';
-import { db } from '../db/store';
-import { Canteen } from '../../src/types';
+import { Router, Request, Response } from "express";
+import { getCanteens, createCanteen } from "../db/store";
+import { Canteen } from "../../src/types";
 
-export const canteensRouter = Router();
+const router = Router();
 
 // GET /api/canteens - List all canteens
-canteensRouter.get('/', (req: Request, res: Response) => {
-  res.json({ success: true, data: db.canteens, total: db.canteens.length });
+router.get("/", async (_req: Request, res: Response) => {
+  try {
+    const canteens = await getCanteens();
+    res.json({ success: true, data: canteens, total: canteens.length });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
+  }
 });
 
 // POST /api/canteens - Add new canteen
-canteensRouter.post('/', (req: Request, res: Response) => {
-  const { code, name, type = 'Main' } = req.body;
-  if (!code || !name) {
-    res.status(400).json({ success: false, message: 'Code and name are required' });
-    return;
+router.post("/", async (req: Request, res: Response) => {
+  try {
+    const { code, name, type = "Main" } = req.body;
+    if (!code || !name) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Code and name are required" });
+    }
+
+    const newCanteen: Canteen = {
+      id: `cnt-${Date.now()}`,
+      code,
+      name,
+      type,
+    };
+
+    const created = await createCanteen(newCanteen);
+    res.status(201).json({
+      success: true,
+      data: created,
+      message: "Canteen added successfully",
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
   }
-
-  const newCanteen: Canteen = {
-    id: `cnt-${Date.now()}`,
-    code,
-    name,
-    type,
-  };
-
-  db.canteens.push(newCanteen);
-  res.status(201).json({ success: true, data: newCanteen, message: 'Canteen added successfully' });
 });
+
+export default router;

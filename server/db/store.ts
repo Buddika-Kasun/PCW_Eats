@@ -1,27 +1,12 @@
-/**
- * ============================================================================
- * PCW Eats Backend - In-Memory & File-Backed Data Store
- * ============================================================================
- * This module manages all application state for the canteen system.
- * It provides structured CRUD operations and initializes with complete seed data
- * (items, meals, quotas, canteens, inventory, and users).
- *
- * Architecture Notes:
- * - Operates in-memory for instant read/write latency.
- * - Safely saves state snapshots to a local JSON file when possible,
- *   making local machine testing and restarts seamless.
- * - Modular helper functions allow easy expansion to PostgreSQL or SQLite.
- */
-
-import { 
-  Item, 
-  Meal, 
-  Quota, 
-  DepartmentQuotaMap, 
-  Canteen, 
-  DailyReadyMadeBatch 
-} from '../../src/types';
-import { appDatabase } from './sqlite';
+import { prisma } from "./prisma";
+import type {
+  Item,
+  Meal,
+  Quota,
+  DepartmentQuotaMap,
+  Canteen,
+  DailyReadyMadeBatch,
+} from "../../src/types";
 
 export interface User {
   id: string;
@@ -39,7 +24,7 @@ export interface InventoryRecord {
   uom: string;
   stock: number;
   minLevel: number;
-  status: 'Good' | 'Low';
+  status: "Good" | "Low";
 }
 
 export interface TransactionRecord {
@@ -50,8 +35,8 @@ export interface TransactionRecord {
   item: string;
   qty: number;
   cost: number;
-  type: 'meal' | 'snack';
-  category?: 'stock-keeping' | 'ready-made';
+  type: "meal" | "snack";
+  category?: "stock-keeping" | "ready-made";
   userId?: string;
   userName?: string;
   canteenId?: string;
@@ -65,498 +50,542 @@ export interface BiometricLog {
   timestamp: string;
   deviceId: string;
   deviceIp: string;
-  verificationMode: 'fingerprint' | 'facial' | 'card' | 'password';
-  status: 'verified' | 'unrecognized';
+  verificationMode: "fingerprint" | "facial" | "card" | "password";
+  status: "verified" | "unrecognized";
 }
 
-class DataStore {
-  // Primary datasets
-  public items: Item[] = [];
-  public meals: Meal[] = [];
-  public quotas: Quota[] = [];
-  public deptQuotaMaps: DepartmentQuotaMap[] = [];
-  public canteens: Canteen[] = [];
-  public inventory: InventoryRecord[] = [];
-  public dailyBatches: DailyReadyMadeBatch[] = [];
-  public users: User[] = [];
-  public transactions: TransactionRecord[] = [];
-  public deptBalances: Record<string, Record<string, number>> = {};
-  public biometricLogs: BiometricLog[] = [];
+// ---------- Items ----------
+export async function getItems(): Promise<Item[]> {
+  const rows = await prisma.item.findMany();
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    uom: r.uom as Item["uom"],
+    price: r.price,
+    category: (r.category ?? "stock-keeping") as Item["category"],
+    shelfLife: (r.shelfLife ?? "perpetual") as Item["shelfLife"],
+  }));
+}
 
-  private truncateTable(tableName: string): void {
-    appDatabase.exec(`DELETE FROM ${tableName}`);
-  }
+export async function createItem(item: Item): Promise<Item> {
+  const r = await prisma.item.create({
+    data: {
+      id: item.id,
+      code: item.code,
+      name: item.name,
+      uom: item.uom,
+      price: item.price,
+      category: item.category ?? "stock-keeping",
+      shelfLife: item.shelfLife ?? "perpetual",
+    },
+  });
+  return {
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    uom: r.uom as Item["uom"],
+    price: r.price,
+    category: (r.category ?? "stock-keeping") as Item["category"],
+    shelfLife: (r.shelfLife ?? "perpetual") as Item["shelfLife"],
+  };
+}
 
-  private replaceTable<T>(tableName: string, columns: readonly string[], rows: T[], mapper: (row: T) => unknown[]): void {
-    this.truncateTable(tableName);
-
-    if (!rows.length) {
-      return;
-    }
-
-    const placeholders = rows.map(() => `(${Array.from({ length: columns.length }, () => '?').join(', ')})`).join(', ');
-    const statement = appDatabase.prepare(`INSERT INTO ${tableName} (${columns.join(', ')}) VALUES ${placeholders}`);
-    const params: unknown[] = [];
-
-    for (const row of rows) {
-      params.push(...mapper(row));
-    }
-
-    statement.run(...params);
-  }
-
-  private readTable<T>(tableName: string, mapper: (row: any) => T): T[] {
-    const rows = appDatabase.prepare(`SELECT * FROM ${tableName}`).all() as any[];
-    return rows.map(mapper);
-  }
-
-  public persistState(): void {
-    try {
-      appDatabase.exec('BEGIN IMMEDIATE');
-
-      try {
-        this.replaceTable('items', ['id', 'code', 'name', 'uom', 'price', 'category', 'shelf_life'], this.items, (item) => [
-          item.id,
-          item.code,
-          item.name,
-          item.uom,
-          item.price,
-          item.category ?? 'stock-keeping',
-          item.shelfLife ?? 'perpetual',
-        ]);
-
-        this.replaceTable('meals', ['id', 'code', 'name', 'cost', 'eligible_from', 'eligible_to'], this.meals, (meal) => [
-          meal.id,
-          meal.code,
-          meal.name,
-          meal.cost,
-          meal.eligibleFrom,
-          meal.eligibleTo,
-        ]);
-
-        this.replaceTable('quotas', ['id', 'code', 'items_json'], this.quotas, (quota) => [
-          quota.id,
-          quota.code,
-          JSON.stringify(quota.items),
-        ]);
-
-        this.replaceTable('dept_quota_maps', ['id', 'department', 'effective_from', 'quota_id'], this.deptQuotaMaps, (map) => [
-          map.id,
-          map.department,
-          map.effectiveFrom,
-          map.quotaId,
-        ]);
-
-        this.replaceTable('canteens', ['id', 'code', 'name', 'type'], this.canteens, (canteen) => [
-          canteen.id,
-          canteen.code,
-          canteen.name,
-          canteen.type,
-        ]);
-
-        this.replaceTable('inventory', ['id', 'item_id', 'item', 'uom', 'stock', 'min_level', 'status'], this.inventory, (record) => [
-          record.id,
-          record.itemId,
-          record.item,
-          record.uom,
-          record.stock,
-          record.minLevel,
-          record.status,
-        ]);
-
-        this.replaceTable('daily_batches', ['id', 'item_id', 'item_name', 'date', 'delivery_time', 'received_qty', 'issued_qty', 'remaining_qty', 'unit_price', 'status', 'cleared_at', 'waste_qty'], this.dailyBatches, (batch) => [
-          batch.id,
-          batch.itemId,
-          batch.itemName,
-          batch.date,
-          batch.deliveryTime ?? null,
-          batch.receivedQty,
-          batch.issuedQty,
-          batch.remainingQty,
-          batch.unitPrice,
-          batch.status,
-          batch.clearedAt ?? null,
-          batch.wasteQty ?? null,
-        ]);
-
-        this.replaceTable('users', ['id', 'name', 'dept', 'role', 'fingerprint_enrolled', 'biometric_card_no'], this.users, (user) => [
-          user.id,
-          user.name,
-          user.dept,
-          user.role,
-          user.fingerprintEnrolled ? 1 : 0,
-          user.biometricCardNo ?? null,
-        ]);
-
-        this.replaceTable('transactions', ['id', 'date', 'time', 'dept', 'item', 'qty', 'cost', 'type', 'category', 'user_id', 'user_name', 'canteen_id'], this.transactions, (tx) => [
-          tx.id,
-          tx.date,
-          tx.time ?? null,
-          tx.dept,
-          tx.item,
-          tx.qty,
-          tx.cost,
-          tx.type,
-          tx.category ?? null,
-          tx.userId ?? null,
-          tx.userName ?? null,
-          tx.canteenId ?? null,
-        ]);
-
-        this.replaceTable('dept_balances', ['department', 'value'], Object.entries(this.deptBalances).map(([department, balances]) => ({ department, value: JSON.stringify(balances) })), (entry) => [
-          entry.department,
-          entry.value,
-        ]);
-
-        this.replaceTable('biometric_logs', ['id', 'employee_no', 'employee_name', 'department', 'timestamp', 'device_id', 'device_ip', 'verification_mode', 'status'], this.biometricLogs, (log) => [
-          log.id,
-          log.employeeNo,
-          log.employeeName,
-          log.department,
-          log.timestamp,
-          log.deviceId,
-          log.deviceIp,
-          log.verificationMode,
-          log.status,
-        ]);
-
-        appDatabase.exec('COMMIT');
-      } catch (error) {
-        appDatabase.exec('ROLLBACK');
-        throw error;
-      }
-    } catch (error) {
-      console.error('Failed to persist PCW Eats state to SQLite:', error);
-    }
-  }
-
-  private hydrateFromDatabase(): boolean {
-    try {
-      const itemRows = this.readTable('items', (row) => ({
-        id: row.id,
-        code: row.code,
-        name: row.name,
-        uom: row.uom,
-        price: Number(row.price),
-        category: row.category ?? 'stock-keeping',
-        shelfLife: row.shelf_life ?? 'perpetual',
-      }));
-      const mealRows = this.readTable('meals', (row) => ({
-        id: row.id,
-        code: row.code,
-        name: row.name,
-        cost: Number(row.cost),
-        eligibleFrom: row.eligible_from,
-        eligibleTo: row.eligible_to,
-      }));
-
-      if (!itemRows.length && !mealRows.length) {
-        return false;
-      }
-
-      this.items = itemRows;
-      this.meals = mealRows;
-      this.quotas = this.readTable('quotas', (row) => ({
-        id: row.id,
-        code: row.code,
-        items: JSON.parse(row.items_json),
-      }));
-      this.deptQuotaMaps = this.readTable('dept_quota_maps', (row) => ({
-        id: row.id,
-        department: row.department,
-        effectiveFrom: row.effective_from,
-        quotaId: row.quota_id,
-      }));
-      this.canteens = this.readTable('canteens', (row) => ({
-        id: row.id,
-        code: row.code,
-        name: row.name,
-        type: row.type,
-      }));
-      this.inventory = this.readTable('inventory', (row) => ({
-        id: row.id,
-        itemId: row.item_id,
-        item: row.item,
-        uom: row.uom,
-        stock: Number(row.stock),
-        minLevel: Number(row.min_level),
-        status: row.status,
-      }));
-      this.dailyBatches = this.readTable('daily_batches', (row) => ({
-        id: row.id,
-        itemId: row.item_id,
-        itemName: row.item_name,
-        date: row.date,
-        deliveryTime: row.delivery_time ?? undefined,
-        receivedQty: Number(row.received_qty),
-        issuedQty: Number(row.issued_qty),
-        remainingQty: Number(row.remaining_qty),
-        unitPrice: Number(row.unit_price),
-        status: row.status,
-        clearedAt: row.cleared_at ?? undefined,
-        wasteQty: row.waste_qty ?? undefined,
-      }));
-      this.users = this.readTable('users', (row) => ({
-        id: row.id,
-        name: row.name,
-        dept: row.dept,
-        role: row.role,
-        fingerprintEnrolled: Boolean(row.fingerprint_enrolled),
-        biometricCardNo: row.biometric_card_no ?? undefined,
-      }));
-      this.transactions = this.readTable('transactions', (row) => ({
-        id: row.id,
-        date: row.date,
-        time: row.time ?? undefined,
-        dept: row.dept,
-        item: row.item,
-        qty: Number(row.qty),
-        cost: Number(row.cost),
-        type: row.type,
-        category: row.category ?? undefined,
-        userId: row.user_id ?? undefined,
-        userName: row.user_name ?? undefined,
-        canteenId: row.canteen_id ?? undefined,
-      }));
-      const deptRows = this.readTable('dept_balances', (row) => ({
-        department: row.department,
-        balances: JSON.parse(row.value),
-      }));
-      this.deptBalances = Object.fromEntries(deptRows.map((row) => [row.department, row.balances]));
-      this.biometricLogs = this.readTable('biometric_logs', (row) => ({
-        id: row.id,
-        employeeNo: row.employee_no,
-        employeeName: row.employee_name,
-        department: row.department,
-        timestamp: row.timestamp,
-        deviceId: row.device_id,
-        deviceIp: row.device_ip,
-        verificationMode: row.verification_mode,
-        status: row.status,
-      }));
-
-      const hasState = this.items.length > 0 || this.meals.length > 0 || this.canteens.length > 0 || this.transactions.length > 0;
-      return hasState;
-    } catch (error) {
-      console.warn('Could not hydrate PCW Eats state from SQLite. Falling back to seed data.', error);
-      return false;
-    }
-  }
-
-  constructor() {
-    const hydrated = this.hydrateFromDatabase();
-    if (!hydrated) {
-      this.seedInitialData();
-      this.persistState();
-    }
-  }
-
-  /**
-   * Seeds the database with default records.
-   * Mirrors the data used across the application.
-   */
-  public seedInitialData(): void {
-    // 1. Items (Stock-keeping and Ready-made)
-    this.items = [
-      { id: '1', code: 'ITM-001', name: 'Ceylon Milk Tea', uom: 'Unit', price: 25, category: 'stock-keeping', shelfLife: 'perpetual' },
-      { id: '2', code: 'ITM-002', name: 'Fresh Coffee Pack', uom: 'Unit', price: 35, category: 'stock-keeping', shelfLife: 'perpetual' },
-      { id: '3', code: 'ITM-003', name: 'Marie Biscuits', uom: 'Pack', price: 40, category: 'stock-keeping', shelfLife: 'perpetual' },
-      { id: '4', code: 'ITM-004', name: 'Cream Cracker', uom: 'Pack', price: 50, category: 'stock-keeping', shelfLife: 'perpetual' },
-      { id: '5', code: 'ITM-005', name: 'Bottled Mineral Water', uom: 'Unit', price: 70, category: 'stock-keeping', shelfLife: 'perpetual' },
-      { id: '6', code: 'ITM-006', name: 'Spicy Fish Bun', uom: 'Unit', price: 80, category: 'ready-made', shelfLife: 'daily' },
-      { id: '7', code: 'ITM-007', name: 'Crispy Fish Roll', uom: 'Unit', price: 90, category: 'ready-made', shelfLife: 'daily' },
-      { id: '8', code: 'ITM-008', name: 'Vegetable Samosa', uom: 'Unit', price: 70, category: 'ready-made', shelfLife: 'daily' },
-      { id: '9', code: 'ITM-009', name: 'Chicken Puff Pastry', uom: 'Unit', price: 110, category: 'ready-made', shelfLife: 'daily' },
-      { id: '10', code: 'ITM-010', name: 'Ulundu Vadai', uom: 'Unit', price: 65, category: 'ready-made', shelfLife: 'daily' },
-    ];
-
-    // 2. Meals Catalog
-    this.meals = [
-      { id: '1', code: 'MEL-001', name: 'Breakfast (String Hoppers & Curry)', cost: 150, eligibleFrom: '07:00', eligibleTo: '09:30' },
-      { id: '2', code: 'MEL-002', name: 'Lunch (Rice & 3 Curries)', cost: 250, eligibleFrom: '11:30', eligibleTo: '14:30' },
-      { id: '3', code: 'MEL-003', name: 'Dinner (Noodles / Fried Rice)', cost: 200, eligibleFrom: '18:30', eligibleTo: '21:00' },
-      { id: '4', code: 'MEL-004', name: 'Midnight Shift Snack Meal', cost: 180, eligibleFrom: '23:30', eligibleTo: '02:00' },
-    ];
-
-    // 3. Quotas
-    this.quotas = [
-      {
-        id: '1',
-        code: 'QTA-STD-TEA',
-        items: [
-          { itemId: '1', eligibleQty: 50 },
-          { itemId: '2', eligibleQty: 20 },
-        ],
+export async function updateItem(
+  id: string,
+  patch: Partial<Item>,
+): Promise<Item | null> {
+  try {
+    const r = await prisma.item.update({
+      where: { id },
+      data: {
+        code: patch.code,
+        name: patch.name,
+        uom: patch.uom,
+        price: patch.price,
+        category: patch.category,
+        shelfLife: patch.shelfLife,
       },
-      {
-        id: '2',
-        code: 'QTA-EXEC-SNACK',
-        items: [
-          { itemId: '1', eligibleQty: 100 },
-          { itemId: '2', eligibleQty: 50 },
-          { itemId: '3', eligibleQty: 30 },
-        ],
-      },
-    ];
-
-    // 4. Department Quota Maps
-    this.deptQuotaMaps = [
-      { id: '1', department: 'Production', effectiveFrom: '2024-01-01', quotaId: '1' },
-      { id: '2', department: 'IT', effectiveFrom: '2024-01-01', quotaId: '2' },
-      { id: '3', department: 'HR', effectiveFrom: '2024-01-01', quotaId: '1' },
-      { id: '4', department: 'Logistics', effectiveFrom: '2024-01-01', quotaId: '1' },
-    ];
-
-    // 5. Canteens
-    this.canteens = [
-      { id: '1', code: 'CNT-01', name: 'Main Plant Canteen', type: 'Main' },
-      { id: '2', code: 'CNT-02', name: 'Warehouse Snack Bar', type: 'Snack Bar' },
-      { id: '3', code: 'CNT-03', name: 'Executive Dining Lounge', type: 'Executive' },
-    ];
-
-    // 6. Stock Inventory
-    this.inventory = [
-      { id: '1', itemId: '1', item: 'Ceylon Milk Tea', uom: 'Unit', stock: 450, minLevel: 100, status: 'Good' },
-      { id: '2', itemId: '2', item: 'Fresh Coffee Pack', uom: 'Unit', stock: 85, minLevel: 50, status: 'Good' },
-      { id: '3', itemId: '3', item: 'Marie Biscuits', uom: 'Pack', stock: 20, minLevel: 50, status: 'Low' },
-      { id: '4', itemId: '4', item: 'Cream Cracker', uom: 'Pack', stock: 120, minLevel: 40, status: 'Good' },
-      { id: '5', itemId: '5', item: 'Bottled Mineral Water', uom: 'Unit', stock: 15, minLevel: 30, status: 'Low' },
-    ];
-
-    // 7. Today's Ready-Made Batches (Fresh daily, zero rollover)
-    this.dailyBatches = [
-      {
-        id: 'batch-1',
-        itemId: '6',
-        itemName: 'Spicy Fish Bun',
-        date: 'Today',
-        deliveryTime: '07:30 AM',
-        receivedQty: 50,
-        issuedQty: 18,
-        remainingQty: 32,
-        unitPrice: 80,
-        status: 'available',
-      },
-      {
-        id: 'batch-2',
-        itemId: '7',
-        itemName: 'Crispy Fish Roll',
-        date: 'Today',
-        deliveryTime: '07:30 AM',
-        receivedQty: 40,
-        issuedQty: 35,
-        remainingQty: 5,
-        unitPrice: 90,
-        status: 'low',
-      },
-      {
-        id: 'batch-3',
-        itemId: '8',
-        itemName: 'Vegetable Samosa',
-        date: 'Today',
-        deliveryTime: '08:00 AM',
-        receivedQty: 60,
-        issuedQty: 60,
-        remainingQty: 0,
-        unitPrice: 70,
-        status: 'sold-out',
-      },
-      {
-        id: 'batch-4',
-        itemId: '9',
-        itemName: 'Chicken Puff Pastry',
-        date: 'Today',
-        deliveryTime: '08:15 AM',
-        receivedQty: 35,
-        issuedQty: 12,
-        remainingQty: 23,
-        unitPrice: 110,
-        status: 'available',
-      },
-      {
-        id: 'batch-5',
-        itemId: '10',
-        itemName: 'Ulundu Vadai',
-        date: 'Today',
-        deliveryTime: '07:15 AM',
-        receivedQty: 50,
-        issuedQty: 25,
-        remainingQty: 25,
-        unitPrice: 65,
-        status: 'available',
-      },
-    ];
-
-    // 8. Enrolled Employees (Mapped with ZKTeco MB360 biometric IDs)
-    this.users = [
-      { id: 'EMP001', name: 'Kasun Perera', dept: 'Production', role: 'Staff', fingerprintEnrolled: true, biometricCardNo: '1001' },
-      { id: 'EMP002', name: 'Niroshan Silva', dept: 'Logistics', role: 'Staff', fingerprintEnrolled: true, biometricCardNo: '1002' },
-      { id: 'EMP003', name: 'Amali Fernando', dept: 'IT', role: 'Manager', fingerprintEnrolled: true, biometricCardNo: '1003' },
-      { id: 'EMP004', name: 'Dilshan Madusanka', dept: 'HR', role: 'Executive', fingerprintEnrolled: true, biometricCardNo: '1004' },
-      { id: 'EMP005', name: 'Sachini Wickramasinghe', dept: 'Finance', role: 'Officer', fingerprintEnrolled: true, biometricCardNo: '1005' },
-      { id: 'EMP006', name: 'Ruwan Jayasinghe', dept: 'Production', role: 'Shift Lead', fingerprintEnrolled: true, biometricCardNo: '1006' },
-      { id: 'EMP007', name: 'Chathura Bandara', dept: 'Logistics', role: 'Driver', fingerprintEnrolled: true, biometricCardNo: '1007' },
-    ];
-
-    // 9. Department Quota Balances for stock-keeping items
-    this.deptBalances = {
-      'Production': { '1': 45, '2': 18, '3': 15 },
-      'IT': { '1': 88, '2': 42, '3': 25 },
-      'HR': { '1': 35, '2': 15, '3': 10 },
-      'Logistics': { '1': 40, '2': 12, '3': 8 },
-      'Finance': { '1': 30, '2': 14, '3': 12 },
+    });
+    return {
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      uom: r.uom as Item["uom"],
+      price: r.price,
+      category: (r.category ?? "stock-keeping") as Item["category"],
+      shelfLife: (r.shelfLife ?? "perpetual") as Item["shelfLife"],
     };
-
-    // 10. Multi-Month Historical Transactions
-    this.transactions = [
-      // Current Month
-      { id: 'tx-01', date: '2024-04-12', time: '12:15 PM', dept: 'Production', item: 'Lunch (Rice & 3 Curries)', qty: 45, cost: 11250, type: 'meal', userId: 'EMP001', userName: 'Kasun Perera', canteenId: '1' },
-      { id: 'tx-02', date: '2024-04-12', time: '10:30 AM', dept: 'IT', item: 'Ceylon Milk Tea', qty: 12, cost: 300, type: 'snack', category: 'stock-keeping', userId: 'EMP003', userName: 'Amali Fernando', canteenId: '1' },
-      { id: 'tx-03', date: '2024-04-12', time: '09:45 AM', dept: 'HR', item: 'Fresh Coffee Pack', qty: 5, cost: 175, type: 'snack', category: 'stock-keeping', userId: 'EMP004', userName: 'Dilshan Madusanka', canteenId: '1' },
-      { id: 'tx-04', date: '2024-04-11', time: '19:20 PM', dept: 'Production', item: 'Dinner (Noodles / Fried Rice)', qty: 38, cost: 7600, type: 'meal', userId: 'EMP006', userName: 'Ruwan Jayasinghe', canteenId: '1' },
-      { id: 'tx-05', date: '2024-04-11', time: '12:45 PM', dept: 'Logistics', item: 'Lunch (Rice & 3 Curries)', qty: 22, cost: 5500, type: 'meal', userId: 'EMP002', userName: 'Niroshan Silva', canteenId: '2' },
-      { id: 'tx-06', date: '2024-04-11', time: '10:15 AM', dept: 'Production', item: 'Spicy Fish Bun', qty: 15, cost: 1200, type: 'snack', category: 'ready-made', userId: 'EMP001', userName: 'Kasun Perera', canteenId: '1' },
-      { id: 'tx-07', date: '2024-04-10', time: '12:30 PM', dept: 'IT', item: 'Lunch (Rice & 3 Curries)', qty: 10, cost: 2500, type: 'meal', userId: 'EMP003', userName: 'Amali Fernando', canteenId: '1' },
-      { id: 'tx-08', date: '2024-04-10', time: '09:15 AM', dept: 'Finance', item: 'Ceylon Milk Tea', qty: 8, cost: 200, type: 'snack', category: 'stock-keeping', userId: 'EMP005', userName: 'Sachini Wickramasinghe', canteenId: '1' },
-      
-      // March Historical
-      { id: 'tx-09', date: '2024-03-28', time: '12:30 PM', dept: 'Production', item: 'Lunch (Rice & 3 Curries)', qty: 40, cost: 10000, type: 'meal', userId: 'EMP001', userName: 'Kasun Perera', canteenId: '1' },
-      { id: 'tx-10', date: '2024-03-27', time: '19:00 PM', dept: 'Logistics', item: 'Dinner (Noodles / Fried Rice)', qty: 20, cost: 4000, type: 'meal', userId: 'EMP002', userName: 'Niroshan Silva', canteenId: '1' },
-      { id: 'tx-11', date: '2024-03-25', time: '10:00 AM', dept: 'IT', item: 'Fresh Coffee Pack', qty: 15, cost: 525, type: 'snack', category: 'stock-keeping', userId: 'EMP003', userName: 'Amali Fernando', canteenId: '1' },
-      { id: 'tx-12', date: '2024-03-24', time: '15:20 PM', dept: 'HR', item: 'Crispy Fish Roll', qty: 10, cost: 900, type: 'snack', category: 'ready-made', userId: 'EMP004', userName: 'Dilshan Madusanka', canteenId: '1' },
-      
-      // February Historical
-      { id: 'tx-13', date: '2024-02-22', time: '12:30 PM', dept: 'Production', item: 'Lunch (Rice & 3 Curries)', qty: 44, cost: 11000, type: 'meal', userId: 'EMP001', userName: 'Kasun Perera', canteenId: '1' },
-      { id: 'tx-14', date: '2024-02-20', time: '12:15 PM', dept: 'Logistics', item: 'Lunch (Rice & 3 Curries)', qty: 25, cost: 6250, type: 'meal', userId: 'EMP007', userName: 'Chathura Bandara', canteenId: '1' },
-    ];
-
-    // 11. Initial Biometric Logs
-    this.biometricLogs = [
-      {
-        id: 'bio-01',
-        employeeNo: 'EMP001',
-        employeeName: 'Kasun Perera',
-        department: 'Production',
-        timestamp: new Date().toLocaleTimeString(),
-        deviceId: 'MB360-CANTEEN-01',
-        deviceIp: '192.168.1.201',
-        verificationMode: 'fingerprint',
-        status: 'verified',
-      },
-      {
-        id: 'bio-02',
-        employeeNo: 'EMP003',
-        employeeName: 'Amali Fernando',
-        department: 'IT',
-        timestamp: new Date(Date.now() - 15 * 60000).toLocaleTimeString(),
-        deviceId: 'MB360-CANTEEN-01',
-        deviceIp: '192.168.1.201',
-        verificationMode: 'fingerprint',
-        status: 'verified',
-      },
-    ];
+  } catch {
+    return null;
   }
 }
 
-// Export singleton instance
-export const db = new DataStore();
+export async function deleteItem(id: string): Promise<boolean> {
+  try {
+    await prisma.item.delete({ where: { id } });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---------- Meals ----------
+export async function getMeals(): Promise<Meal[]> {
+  const rows = await prisma.meal.findMany();
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    cost: r.cost,
+    eligibleFrom: r.eligibleFrom,
+    eligibleTo: r.eligibleTo,
+  }));
+}
+
+export async function createMeal(meal: Meal): Promise<Meal> {
+  const r = await prisma.meal.create({ data: meal });
+  return {
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    cost: r.cost,
+    eligibleFrom: r.eligibleFrom,
+    eligibleTo: r.eligibleTo,
+  };
+}
+
+export async function updateMeal(
+  id: string,
+  patch: Partial<Meal>,
+): Promise<Meal | null> {
+  try {
+    const r = await prisma.meal.update({
+      where: { id },
+      data: {
+        code: patch.code,
+        name: patch.name,
+        cost: patch.cost,
+        eligibleFrom: patch.eligibleFrom,
+        eligibleTo: patch.eligibleTo,
+      },
+    });
+    return {
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      cost: r.cost,
+      eligibleFrom: r.eligibleFrom,
+      eligibleTo: r.eligibleTo,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteMeal(id: string): Promise<boolean> {
+  try {
+    await prisma.meal.delete({ where: { id } });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---------- Quotas ----------
+export async function getQuotas(): Promise<Quota[]> {
+  const rows = await prisma.quota.findMany();
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code,
+    items: JSON.parse(r.itemsJson),
+  }));
+}
+
+export async function createQuota(q: Quota): Promise<Quota> {
+  const r = await prisma.quota.create({
+    data: { id: q.id, code: q.code, itemsJson: JSON.stringify(q.items) },
+  });
+  return { id: r.id, code: r.code, items: JSON.parse(r.itemsJson) };
+}
+
+export async function updateQuota(
+  id: string,
+  patch: Partial<Quota>,
+): Promise<Quota | null> {
+  try {
+    const r = await prisma.quota.update({
+      where: { id },
+      data: {
+        code: patch.code,
+        itemsJson: patch.items ? JSON.stringify(patch.items) : undefined,
+      },
+    });
+    return { id: r.id, code: r.code, items: JSON.parse(r.itemsJson) };
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteQuota(id: string): Promise<boolean> {
+  try {
+    await prisma.quota.delete({ where: { id } });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---------- Department Quota Maps ----------
+export async function getDeptQuotaMaps(): Promise<DepartmentQuotaMap[]> {
+  const rows = await prisma.departmentQuotaMap.findMany();
+  return rows.map((r) => ({
+    id: r.id,
+    department: r.department,
+    effectiveFrom: r.effectiveFrom,
+    quotaId: r.quotaId,
+  }));
+}
+
+export async function createDeptQuotaMap(
+  m: DepartmentQuotaMap,
+): Promise<DepartmentQuotaMap> {
+  const r = await prisma.departmentQuotaMap.create({ data: m });
+  return {
+    id: r.id,
+    department: r.department,
+    effectiveFrom: r.effectiveFrom,
+    quotaId: r.quotaId,
+  };
+}
+
+// ---------- Canteens ----------
+export async function getCanteens(): Promise<Canteen[]> {
+  const rows = await prisma.canteen.findMany();
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    type: r.type as Canteen["type"],
+  }));
+}
+
+export async function createCanteen(canteen: Canteen): Promise<Canteen> {
+  const r = await prisma.canteen.create({ data: canteen });
+  return {
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    type: r.type as Canteen["type"],
+  };
+}
+
+// ---------- Inventory ----------
+export async function getInventory(): Promise<InventoryRecord[]> {
+  const rows = await prisma.inventory.findMany();
+  return rows.map((r) => ({
+    id: r.id,
+    itemId: r.itemId,
+    item: r.item,
+    uom: r.uom,
+    stock: r.stock,
+    minLevel: r.minLevel,
+    status: r.status as "Good" | "Low",
+  }));
+}
+
+export async function updateInventory(
+  id: string,
+  patch: Partial<InventoryRecord>,
+): Promise<InventoryRecord | null> {
+  try {
+    const r = await prisma.inventory.update({
+      where: { id },
+      data: {
+        item: patch.item,
+        uom: patch.uom,
+        stock: patch.stock,
+        minLevel: patch.minLevel,
+        status: patch.status,
+      },
+    });
+    return {
+      id: r.id,
+      itemId: r.itemId,
+      item: r.item,
+      uom: r.uom,
+      stock: r.stock,
+      minLevel: r.minLevel,
+      status: r.status as "Good" | "Low",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function createInventoryRecord(
+  record: InventoryRecord,
+): Promise<InventoryRecord> {
+  const r = await prisma.inventory.create({
+    data: {
+      id: record.id,
+      itemId: record.itemId,
+      item: record.item,
+      uom: record.uom,
+      stock: record.stock,
+      minLevel: record.minLevel,
+      status: record.status,
+    },
+  });
+  return {
+    id: r.id,
+    itemId: r.itemId,
+    item: r.item,
+    uom: r.uom,
+    stock: r.stock,
+    minLevel: r.minLevel,
+    status: r.status as "Good" | "Low",
+  };
+}
+
+// ---------- Daily batches ----------
+export async function getDailyBatches(): Promise<DailyReadyMadeBatch[]> {
+  const rows = await prisma.dailyBatch.findMany();
+  return rows.map((r) => ({
+    id: r.id,
+    itemId: r.itemId,
+    itemName: r.itemName,
+    date: r.date,
+    deliveryTime: r.deliveryTime ?? undefined,
+    receivedQty: r.receivedQty,
+    issuedQty: r.issuedQty,
+    remainingQty: r.remainingQty,
+    unitPrice: r.unitPrice,
+    status: r.status as DailyReadyMadeBatch["status"],
+    clearedAt: r.clearedAt ?? undefined,
+    wasteQty: r.wasteQty ?? undefined,
+  }));
+}
+
+export async function updateDailyBatch(
+  id: string,
+  patch: Partial<DailyReadyMadeBatch>,
+): Promise<DailyReadyMadeBatch | null> {
+  try {
+    const r = await prisma.dailyBatch.update({
+      where: { id },
+      data: {
+        issuedQty: patch.issuedQty,
+        remainingQty: patch.remainingQty,
+        status: patch.status,
+        clearedAt: patch.clearedAt,
+        wasteQty: patch.wasteQty,
+      },
+    });
+    return {
+      id: r.id,
+      itemId: r.itemId,
+      itemName: r.itemName,
+      date: r.date,
+      deliveryTime: r.deliveryTime ?? undefined,
+      receivedQty: r.receivedQty,
+      issuedQty: r.issuedQty,
+      remainingQty: r.remainingQty,
+      unitPrice: r.unitPrice,
+      status: r.status as DailyReadyMadeBatch["status"],
+      clearedAt: r.clearedAt ?? undefined,
+      wasteQty: r.wasteQty ?? undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function createDailyBatch(
+  batch: DailyReadyMadeBatch,
+): Promise<DailyReadyMadeBatch> {
+  const r = await prisma.dailyBatch.create({
+    data: {
+      id: batch.id,
+      itemId: batch.itemId,
+      itemName: batch.itemName,
+      date: batch.date,
+      deliveryTime: batch.deliveryTime ?? null,
+      receivedQty: batch.receivedQty,
+      issuedQty: batch.issuedQty,
+      remainingQty: batch.remainingQty,
+      unitPrice: batch.unitPrice,
+      status: batch.status,
+      clearedAt: batch.clearedAt ?? null,
+      wasteQty: batch.wasteQty ?? null,
+    },
+  });
+  return {
+    id: r.id,
+    itemId: r.itemId,
+    itemName: r.itemName,
+    date: r.date,
+    deliveryTime: r.deliveryTime ?? undefined,
+    receivedQty: r.receivedQty,
+    issuedQty: r.issuedQty,
+    remainingQty: r.remainingQty,
+    unitPrice: r.unitPrice,
+    status: r.status as DailyReadyMadeBatch["status"],
+    clearedAt: r.clearedAt ?? undefined,
+    wasteQty: r.wasteQty ?? undefined,
+  };
+}
+
+// ---------- Users ----------
+export async function getUsers(): Promise<User[]> {
+  const rows = await prisma.user.findMany();
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    dept: r.dept,
+    role: r.role,
+    fingerprintEnrolled: r.fingerprintEnrolled ?? undefined,
+    biometricCardNo: r.biometricCardNo ?? undefined,
+  }));
+}
+
+export async function getUserById(id: string): Promise<User | null> {
+  const r = await prisma.user.findUnique({ where: { id } });
+  if (!r) return null;
+  return {
+    id: r.id,
+    name: r.name,
+    dept: r.dept,
+    role: r.role,
+    fingerprintEnrolled: r.fingerprintEnrolled ?? undefined,
+    biometricCardNo: r.biometricCardNo ?? undefined,
+  };
+}
+
+export async function getUserByBiometricCard(
+  cardNo: string,
+): Promise<User | null> {
+  const r = await prisma.user.findFirst({
+    where: { biometricCardNo: cardNo },
+  });
+  if (!r) return null;
+  return {
+    id: r.id,
+    name: r.name,
+    dept: r.dept,
+    role: r.role,
+    fingerprintEnrolled: r.fingerprintEnrolled ?? undefined,
+    biometricCardNo: r.biometricCardNo ?? undefined,
+  };
+}
+
+// ---------- Transactions ----------
+export async function getTransactions(): Promise<TransactionRecord[]> {
+  const rows = await prisma.transaction.findMany();
+  return rows.map((r) => ({
+    id: r.id,
+    date: r.date,
+    time: r.time ?? undefined,
+    dept: r.dept,
+    item: r.item,
+    qty: r.qty,
+    cost: r.cost,
+    type: r.type as "meal" | "snack",
+    category: (r.category ?? undefined) as TransactionRecord["category"],
+    userId: r.userId ?? undefined,
+    userName: r.userName ?? undefined,
+    canteenId: r.canteenId ?? undefined,
+  }));
+}
+
+export async function createTransaction(
+  tx: TransactionRecord,
+): Promise<TransactionRecord> {
+  const r = await prisma.transaction.create({
+    data: {
+      id: tx.id,
+      date: tx.date,
+      time: tx.time ?? null,
+      dept: tx.dept,
+      item: tx.item,
+      qty: tx.qty,
+      cost: tx.cost,
+      type: tx.type,
+      category: tx.category ?? null,
+      userId: tx.userId ?? null,
+      userName: tx.userName ?? null,
+      canteenId: tx.canteenId ?? null,
+    },
+  });
+  return {
+    id: r.id,
+    date: r.date,
+    time: r.time ?? undefined,
+    dept: r.dept,
+    item: r.item,
+    qty: r.qty,
+    cost: r.cost,
+    type: r.type as "meal" | "snack",
+    category: (r.category ?? undefined) as TransactionRecord["category"],
+    userId: r.userId ?? undefined,
+    userName: r.userName ?? undefined,
+    canteenId: r.canteenId ?? undefined,
+  };
+}
+
+// ---------- Department balances ----------
+export async function getDeptBalances(): Promise<
+  Record<string, Record<string, number>>
+> {
+  const rows = await prisma.deptBalance.findMany();
+  return Object.fromEntries(
+    rows.map((r) => [r.department, JSON.parse(r.value)]),
+  );
+}
+
+export async function setDeptBalance(
+  department: string,
+  balances: Record<string, number>,
+): Promise<void> {
+  await prisma.deptBalance.upsert({
+    where: { department },
+    update: { value: JSON.stringify(balances) },
+    create: { department, value: JSON.stringify(balances) },
+  });
+}
+
+// ---------- Biometric logs ----------
+export async function getBiometricLogs(limit = 100): Promise<BiometricLog[]> {
+  const rows = await prisma.biometricLog.findMany({
+    orderBy: { timestamp: "desc" },
+    take: limit,
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    employeeNo: r.employeeNo,
+    employeeName: r.employeeName,
+    department: r.department,
+    timestamp: r.timestamp,
+    deviceId: r.deviceId,
+    deviceIp: r.deviceIp,
+    verificationMode: r.verificationMode as BiometricLog["verificationMode"],
+    status: r.status as BiometricLog["status"],
+  }));
+}
+
+export async function createBiometricLog(
+  log: BiometricLog,
+): Promise<BiometricLog> {
+  const r = await prisma.biometricLog.create({ data: log });
+  return {
+    id: r.id,
+    employeeNo: r.employeeNo,
+    employeeName: r.employeeName,
+    department: r.department,
+    timestamp: r.timestamp,
+    deviceId: r.deviceId,
+    deviceIp: r.deviceIp,
+    verificationMode: r.verificationMode as BiometricLog["verificationMode"],
+    status: r.status as BiometricLog["status"],
+  };
+}

@@ -17,15 +17,15 @@
  */
 
 import { Router } from 'express';
-import { itemsRouter } from './items';
-import { batchesRouter } from './batches';
-import { mealsRouter } from './meals';
-import { quotasRouter } from './quotas';
-import { canteensRouter } from './canteens';
-import { inventoryRouter } from './inventory';
-import { transactionsRouter } from './transactions';
-import { zktecoRouter } from './zkteco';
-import { reportsRouter } from './reports';
+import itemsRouter from "./items";
+import batchesRouter from "./batches";
+import mealsRouter from "./meals";
+import quotasRouter from "./quotas";
+import canteensRouter from "./canteens";
+import inventoryRouter from "./inventory";
+import transactionsRouter from "./transactions";
+import zktecoRouter from "./zkteco";
+import reportsRouter from "./reports";
 
 export const apiRouter = Router();
 

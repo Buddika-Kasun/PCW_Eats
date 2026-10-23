@@ -1,11 +1,11 @@
 /**
  * ============================================================================
- * ZKTeco MB360 Biometric API Routes (/api/zkteco)
+ * ZKTeco MB360 Biometric API Routes (/api/zkteco) — Prisma/PostgreSQL
  * ============================================================================
- * 
+ *
  * Provides HTTP endpoints and Server-Sent Events (SSE) for the ZKTeco MB360
  * Fingerprint & Facial recognition terminal.
- * 
+ *
  * Endpoints:
  * - GET  /api/zkteco/status        : Returns connection state, configured IP, model
  * - POST /api/zkteco/config        : Update IP (default 192.168.1.201), Port, mode
@@ -15,14 +15,14 @@
  * - GET  /api/zkteco/events        : Live SSE stream pushing fingerprint events to browser
  */
 
-import { Router, Request, Response } from 'express';
-import { zktecoService } from '../services/zktecoService';
-import { db } from '../db/store';
+import { Router, Request, Response } from "express";
+import { zktecoService } from "../services/zktecoService";
+import { getBiometricLogs } from "../db/store";
 
-export const zktecoRouter = Router();
+const router = Router();
 
 // GET /api/zkteco/status - Device status and connection details
-zktecoRouter.get('/status', (req: Request, res: Response) => {
+router.get("/status", (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: zktecoService.getStatus(),
@@ -30,78 +30,101 @@ zktecoRouter.get('/status', (req: Request, res: Response) => {
 });
 
 // POST /api/zkteco/config - Update device connection settings
-zktecoRouter.post('/config', (req: Request, res: Response) => {
-  const { ip, port, commKey, deviceName, mode } = req.body;
-  const updated = zktecoService.updateConfig({
-    ...(ip ? { ip } : {}),
-    ...(port ? { port: Number(port) } : {}),
-    ...(commKey !== undefined ? { commKey: Number(commKey) } : {}),
-    ...(deviceName ? { deviceName } : {}),
-    ...(mode ? { mode } : {}),
-  });
+router.post("/config", (req: Request, res: Response) => {
+  try {
+    const { ip, port, commKey, deviceName, mode } = req.body;
+    const updated = zktecoService.updateConfig({
+      ...(ip ? { ip } : {}),
+      ...(port ? { port: Number(port) } : {}),
+      ...(commKey !== undefined ? { commKey: Number(commKey) } : {}),
+      ...(deviceName ? { deviceName } : {}),
+      ...(mode ? { mode } : {}),
+    });
 
-  res.json({
-    success: true,
-    data: updated,
-    message: 'ZKTeco MB360 configuration updated',
-  });
+    res.json({
+      success: true,
+      data: updated,
+      message: "ZKTeco MB360 configuration updated",
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
+  }
 });
 
 // POST /api/zkteco/simulate-scan - Trigger simulated fingerprint scan
-zktecoRouter.post('/simulate-scan', (req: Request, res: Response) => {
-  const { employeeId } = req.body;
-  const result = zktecoService.simulateScan(employeeId);
-  res.json({
-    success: result.success,
-    data: result,
-  });
+router.post("/simulate-scan", async (req: Request, res: Response) => {
+  try {
+    const { employeeId } = req.body;
+    const result = await zktecoService.simulateScan(employeeId);
+    res.json({
+      success: result.success,
+      data: result,
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
+  }
 });
 
 // POST /api/zkteco/punch - Punch ingestion endpoint for real hardware or ADMS hook
-zktecoRouter.post('/punch', (req: Request, res: Response) => {
-  const { userIdOrCard, verifyType = 'fingerprint', deviceId } = req.body;
-  if (!userIdOrCard) {
-    res.status(400).json({ success: false, message: 'userIdOrCard is required' });
-    return;
+router.post("/punch", async (req: Request, res: Response) => {
+  try {
+    const { userIdOrCard, verifyType = "fingerprint", deviceId } = req.body;
+    if (!userIdOrCard) {
+      return res
+        .status(400)
+        .json({ success: false, message: "userIdOrCard is required" });
+    }
+
+    const result = await zktecoService.handleDevicePunch({
+      userIdOrCard,
+      verifyType,
+      deviceId,
+    });
+
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
   }
-
-  const result = zktecoService.handleDevicePunch({
-    userIdOrCard,
-    verifyType,
-    deviceId,
-  });
-
-  res.json(result);
 });
 
 // GET /api/zkteco/logs - Recent biometric attendance logs
-zktecoRouter.get('/logs', (req: Request, res: Response) => {
-  res.json({
-    success: true,
-    data: db.biometricLogs,
-    total: db.biometricLogs.length,
-  });
+router.get("/logs", async (req: Request, res: Response) => {
+  try {
+    const limit = Number(req.query.limit ?? 100);
+    const logs = await getBiometricLogs(limit);
+    res.json({
+      success: true,
+      data: logs,
+      total: logs.length,
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
+  }
 });
 
 // GET /api/zkteco/events - Real-time Server-Sent Events (SSE) stream
-zktecoRouter.get('/events', (req: Request, res: Response) => {
+router.get("/events", (req: Request, res: Response) => {
   // Set SSE headers
   res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": "*",
   });
 
   // Send initial handshake
-  res.write(`data: ${JSON.stringify({ type: 'connected', time: new Date().toISOString() })}\n\n`);
+  res.write(
+    `data: ${JSON.stringify({ type: "connected", time: new Date().toISOString() })}\n\n`,
+  );
 
   // Listener callback for biometric events
-  const onScan = (eventData: any) => {
-    res.write(`data: ${JSON.stringify({ type: 'biometric_scan', ...eventData })}\n\n`);
+  const onScan = (eventData: unknown) => {
+    res.write(
+      `data: ${JSON.stringify({ type: "biometric_scan", ...(eventData as object) })}\n\n`,
+    );
   };
 
-  zktecoService.on('scan', onScan);
+  zktecoService.on("scan", onScan);
 
   // Keep-alive heartbeat every 20 seconds
   const heartbeat = setInterval(() => {
@@ -109,8 +132,10 @@ zktecoRouter.get('/events', (req: Request, res: Response) => {
   }, 20000);
 
   // Clean up on disconnect
-  req.on('close', () => {
+  req.on("close", () => {
     clearInterval(heartbeat);
-    zktecoService.removeListener('scan', onScan);
+    zktecoService.removeListener("scan", onScan);
   });
 });
+
+export default router;

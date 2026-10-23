@@ -103,7 +103,7 @@ export default function App() {
           </button>
         </header>
 
-        <div className="p-4 md:p-8 lg:p-12 max-w-7xl mx-auto">
+        <div className="p-4 md:p-8 lg:p-12 max-w-8xl mx-auto">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentView}

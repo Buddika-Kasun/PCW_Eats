@@ -1,87 +1,139 @@
 /**
  * ============================================================================
- * Meal Management Routes (/api/meals)
+ * Meal Management Routes (/api/meals) — Prisma/PostgreSQL
  * ============================================================================
  * Handles meal catalog items and eligibility time slots
  * (Breakfast, Lunch, Dinner, Midnight shift meals).
  */
 
-import { Router, Request, Response } from 'express';
-import { db } from '../db/store';
-import { Meal } from '../../src/types';
+import { Router, Request, Response } from "express";
+import { getMeals, createMeal, updateMeal, deleteMeal } from "../db/store";
+import { Meal } from "../../src/types";
 
-export const mealsRouter = Router();
+const router = Router();
 
 // GET /api/meals - List all meal types
-mealsRouter.get('/', (req: Request, res: Response) => {
-  res.json({ success: true, data: db.meals, total: db.meals.length });
+router.get("/", async (_req: Request, res: Response) => {
+  try {
+    const meals = await getMeals();
+    res.json({ success: true, data: meals, total: meals.length });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
+  }
 });
 
 // GET /api/meals/active - Return meals currently eligible based on current local time
-mealsRouter.get('/active', (req: Request, res: Response) => {
-  const now = new Date();
-  const currentHours = now.getHours().toString().padStart(2, '0');
-  const currentMinutes = now.getMinutes().toString().padStart(2, '0');
-  const currentTime = `${currentHours}:${currentMinutes}`;
+router.get("/active", async (_req: Request, res: Response) => {
+  try {
+    const meals = await getMeals();
+    const now = new Date();
+    const currentHours = now.getHours().toString().padStart(2, "0");
+    const currentMinutes = now.getMinutes().toString().padStart(2, "0");
+    const currentTime = `${currentHours}:${currentMinutes}`;
 
-  const eligibleMeals = db.meals.filter(meal => {
-    // Basic window check
-    if (meal.eligibleFrom <= meal.eligibleTo) {
-      return currentTime >= meal.eligibleFrom && currentTime <= meal.eligibleTo;
-    }
-    // Overnight window check (e.g., 23:30 to 02:00)
-    return currentTime >= meal.eligibleFrom || currentTime <= meal.eligibleTo;
-  });
+    const eligibleMeals = meals.filter((meal) => {
+      // Basic window check
+      if (meal.eligibleFrom <= meal.eligibleTo) {
+        return (
+          currentTime >= meal.eligibleFrom && currentTime <= meal.eligibleTo
+        );
+      }
+      // Overnight window check (e.g., 23:30 to 02:00)
+      return currentTime >= meal.eligibleFrom || currentTime <= meal.eligibleTo;
+    });
 
-  res.json({
-    success: true,
-    currentTime,
-    data: eligibleMeals.length > 0 ? eligibleMeals : [db.meals[1]], // Fallback to Lunch for testing
-  });
+    // Fallback to Lunch (the "MEL-002" seed row) when nothing is currently open,
+    // so the POS screen still has something to show.
+    const lunch = meals.find((m) => m.code === "MEL-002") ?? meals[1] ?? null;
+    const data =
+      eligibleMeals.length > 0 ? eligibleMeals : lunch ? [lunch] : [];
+
+    res.json({ success: true, currentTime, data });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
+  }
 });
 
 // POST /api/meals - Add new meal
-mealsRouter.post('/', (req: Request, res: Response) => {
-  const { code, name, cost, eligibleFrom, eligibleTo } = req.body;
+router.post("/", async (req: Request, res: Response) => {
+  try {
+    const { code, name, cost, eligibleFrom, eligibleTo } = req.body;
 
-  if (!code || !name || cost === undefined || !eligibleFrom || !eligibleTo) {
-    res.status(400).json({ success: false, message: 'All fields are required' });
-    return;
+    if (!code || !name || cost === undefined || !eligibleFrom || !eligibleTo) {
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields are required" });
+    }
+
+    const newMeal: Meal = {
+      id: `mel-${Date.now()}`,
+      code,
+      name,
+      cost: Number(cost),
+      eligibleFrom,
+      eligibleTo,
+    };
+
+    const created = await createMeal(newMeal);
+    res.status(201).json({
+      success: true,
+      data: created,
+      message: "Meal registered successfully",
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
   }
-
-  const newMeal: Meal = {
-    id: `mel-${Date.now()}`,
-    code,
-    name,
-    cost: Number(cost),
-    eligibleFrom,
-    eligibleTo,
-  };
-
-  db.meals.push(newMeal);
-  res.status(201).json({ success: true, data: newMeal, message: 'Meal registered successfully' });
 });
 
 // PUT /api/meals/:id - Update meal
-mealsRouter.put('/:id', (req: Request, res: Response) => {
-  const index = db.meals.findIndex(m => m.id === req.params.id);
-  if (index === -1) {
-    res.status(404).json({ success: false, message: 'Meal not found' });
-    return;
+router.put("/:id", async (req: Request, res: Response) => {
+  try {
+    const updated = await updateMeal(req.params.id, {
+      ...req.body,
+      id: req.params.id, // preserve id; updateMeal ignores it anyway
+    });
+    if (!updated) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Meal not found" });
+    }
+    res.json({
+      success: true,
+      data: updated,
+      message: "Meal updated successfully",
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
   }
-
-  db.meals[index] = { ...db.meals[index], ...req.body, id: db.meals[index].id };
-  res.json({ success: true, data: db.meals[index], message: 'Meal updated successfully' });
 });
 
 // DELETE /api/meals/:id - Delete meal
-mealsRouter.delete('/:id', (req: Request, res: Response) => {
-  const index = db.meals.findIndex(m => m.id === req.params.id);
-  if (index === -1) {
-    res.status(404).json({ success: false, message: 'Meal not found' });
-    return;
-  }
+router.delete("/:id", async (req: Request, res: Response) => {
+  try {
+    // Fetch first so we can echo the deleted row back (matches original behavior)
+    const meals = await getMeals();
+    const existing = meals.find((m) => m.id === req.params.id);
+    if (!existing) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Meal not found" });
+    }
 
-  const deleted = db.meals.splice(index, 1)[0];
-  res.json({ success: true, data: deleted, message: 'Meal removed successfully' });
+    const ok = await deleteMeal(req.params.id);
+    if (!ok) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Meal not found" });
+    }
+
+    res.json({
+      success: true,
+      data: existing,
+      message: "Meal removed successfully",
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
+  }
 });
+
+export default router;

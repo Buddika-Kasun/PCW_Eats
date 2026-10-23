@@ -1,0 +1,134 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Item {
+  id        String  @id
+  code      String
+  name      String
+  uom       String
+  price     Float
+  category  String? @default("stock-keeping")
+  shelfLife String? @default("perpetual") @map("shelf_life")
+
+  @@map("items")
+}
+
+model Meal {
+  id           String @id
+  code         String
+  name         String
+  cost         Float
+  eligibleFrom String @map("eligible_from")
+  eligibleTo   String @map("eligible_to")
+
+  @@map("meals")
+}
+
+model Quota {
+  id        String @id
+  code      String
+  itemsJson String @map("items_json") @db.Text
+
+  @@map("quotas")
+}
+
+model DepartmentQuotaMap {
+  id            String @id
+  department    String
+  effectiveFrom String @map("effective_from")
+  quotaId       String @map("quota_id")
+
+  @@map("dept_quota_maps")
+}
+
+model Canteen {
+  id   String @id
+  code String
+  name String
+  type String
+
+  @@map("canteens")
+}
+
+model Inventory {
+  id       String @id
+  itemId   String @map("item_id")
+  item     String
+  uom      String
+  stock    Float
+  minLevel Float  @map("min_level")
+  status   String
+
+  @@map("inventory")
+}
+
+model DailyBatch {
+  id           String  @id
+  itemId       String  @map("item_id")
+  itemName     String  @map("item_name")
+  date         String
+  deliveryTime String? @map("delivery_time")
+  receivedQty  Float   @map("received_qty")
+  issuedQty    Float   @map("issued_qty")
+  remainingQty Float   @map("remaining_qty")
+  unitPrice    Float   @map("unit_price")
+  status       String
+  clearedAt    String? @map("cleared_at")
+  wasteQty     Float?  @map("waste_qty")
+
+  @@map("daily_batches")
+}
+
+model User {
+  id                  String  @id
+  name                String
+  dept                String
+  role                String
+  fingerprintEnrolled Boolean? @map("fingerprint_enrolled")
+  biometricCardNo     String?  @map("biometric_card_no")
+
+  @@map("users")
+}
+
+model Transaction {
+  id        String  @id
+  date      String
+  time      String?
+  dept      String
+  item      String
+  qty       Float
+  cost      Float
+  type      String
+  category  String?
+  userId    String? @map("user_id")
+  userName  String? @map("user_name")
+  canteenId String? @map("canteen_id")
+
+  @@map("transactions")
+}
+
+model DeptBalance {
+  department String @id
+  value      String @db.Text
+
+  @@map("dept_balances")
+}
+
+model BiometricLog {
+  id               String @id
+  employeeNo       String @map("employee_no")
+  employeeName     String @map("employee_name")
+  department       String
+  timestamp        String
+  deviceId         String @map("device_id")
+  deviceIp         String @map("device_ip")
+  verificationMode String @map("verification_mode")
+  status           String
+
+  @@map("biometric_logs")
+}

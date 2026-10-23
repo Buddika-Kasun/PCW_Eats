@@ -44,7 +44,8 @@ Both the **Express REST API backend** (`/api/*`) and the **React frontend** run 
 ├── server.ts                       # Main unified Express + Vite entry point
 ├── server/                         # Backend Application Layer
 │   ├── db/
-│   │   └── store.ts                # In-memory & JSON file-backed data store
+│   │   ├── store.ts                # In-memory & JSON file-backed data store
+│   │   └── sqlite.ts               
 │   ├── services/
 │   │   └── zktecoService.ts        # ZKTeco MB360 device bridge & SSE event emitter
 │   └── routes/
