@@ -35,4 +35,4 @@ COPY --from=builder /app/.env.example ./.env.example
 
 EXPOSE 3000
 
-CMD ["npx", "tsx", "server.ts"]
+CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx server.ts"]
