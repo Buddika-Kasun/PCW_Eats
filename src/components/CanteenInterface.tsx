@@ -490,7 +490,7 @@ const CanteenInterface: React.FC<CanteenInterfaceProps> = ({ onBackToDashboard }
   // If no canteen location selected, show terminal selection screen
   if (!selectedCanteen) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+      <div className="min-h-dvh bg-slate-900 flex items-center justify-center p-6">
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -535,7 +535,7 @@ const CanteenInterface: React.FC<CanteenInterfaceProps> = ({ onBackToDashboard }
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-dvh bg-slate-50 flex flex-col">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 px-4 md:px-8 py-4 md:py-6 flex items-center justify-between sticky top-0 z-20 shadow-sm">
         <div className="flex items-center gap-3 md:gap-4">
