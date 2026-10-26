@@ -1,3 +1,5 @@
+import { getToken } from "./authToken";
+
 const KEY = "pcw_eats_user";
 
 export interface AuthUser {
@@ -31,8 +33,16 @@ export function clearUser() {
 }
 
 export async function fetchMe(): Promise<AuthUser | null> {
+    const token = getToken();
+    if (!token) return null;
+
   try {
-    const res = await fetch("/api/auth/me", { credentials: "include" });
+    const res = await fetch("/api/auth/me", {
+      headers: { Authorization: `Bearer ${token}` },
+      credentials: "omit",
+    });
+
+    // const res = await fetch("/api/auth/me", { credentials: "include" });
     if (res.status === 401 || !res.ok) {
       clearUser();
       return null;
