@@ -60,7 +60,7 @@ export default function App() {
   // Canteen interface is full screen, others have sidebar
   if (currentView === "canteen-interface") {
     return (
-      <div className="min-h-screen bg-slate-50 font-sans selection:bg-amber-200 selection:text-amber-900">
+      <div className="min-h-dvh bg-slate-50 font-sans selection:bg-amber-200 selection:text-amber-900">
         <CanteenInterface
           onBackToDashboard={() => handleViewChange("admin-dashboard")}
         />
@@ -69,7 +69,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50 font-sans selection:bg-amber-200 selection:text-amber-900">
+    <div className="flex min-h-dvh bg-slate-50 font-sans selection:bg-amber-200 selection:text-amber-900">
       {/* Desktop Sidebar */}
       <div className="hidden lg:block">
         <Sidebar currentView={currentView} onViewChange={handleViewChange} />
@@ -108,7 +108,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <main className="flex-1 h-screen overflow-y-auto">
+      <main className="flex-1 h-dvh overflow-y-auto">
         {/* Mobile Header */}
         <header className="lg:hidden bg-white border-b border-slate-200 p-4 flex items-center justify-between sticky top-0 z-30">
           <div className="flex items-center gap-3">
