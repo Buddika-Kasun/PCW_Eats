@@ -85,7 +85,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange }) => {
   const groups = ["Admin", "User", "Canteen"];
 
   return (
-    <div className="w-64 bg-slate-900 text-white h-screen flex flex-col border-r border-slate-800">
+    <div className="w-64 bg-slate-900 text-white h-dvh flex flex-col border-r border-slate-800">
       <div className="p-6 flex items-center gap-3">
         <div className="w-10 h-10 bg-amber-400 rounded-lg flex items-center justify-center">
           <Utensils className="text-slate-900" size={24} />
