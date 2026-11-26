@@ -19,6 +19,7 @@ import {
 import { cn } from "../lib/utils";
 import { View } from "../types";
 import { getCachedUser, logout } from "../lib/auth";
+import { isAdminRole } from "../lib/roles";
 
 interface SidebarProps {
   currentView: View;
@@ -28,7 +29,7 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange }) => {
   const user = getCachedUser();
 
-  console.log("Sidebar user:", user);
+  // console.log("Sidebar user:", user);
 
   const displayName =
     user?.displayname?.trim() ||
@@ -82,7 +83,12 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange }) => {
     },
   ];
 
-  const groups = ["Admin", "User", "Canteen"];
+  // Only admin-type users reach this component per App.tsx,
+  // but keep this guard anyway for safety.
+  const admin = isAdminRole(user);
+
+  // Build the groups array dynamically
+  const groups: string[] = admin ? ["Admin", "User", "Canteen"] : [];
 
   return (
     <div className="w-64 bg-slate-900 text-white h-dvh flex flex-col border-r border-slate-800">
@@ -176,6 +182,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange }) => {
       </div>
     </div>
   );
-};
+};;;
 
 export default Sidebar;

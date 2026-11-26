@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Utensils, LogIn, AlertTriangle, Loader2 } from "lucide-react";
+import { Utensils, AlertTriangle, Loader2, LogIn } from "lucide-react";
 import { fetchMe, AuthUser } from "../lib/auth";
 
 interface WelcomeProps {
@@ -24,16 +24,14 @@ export const Welcome: React.FC<WelcomeProps> = ({ onAuthed }) => {
       return;
     }
 
-    // Always verify against the server — cookie is the source of truth.
     (async () => {
       const user = await fetchMe();
       if (user) {
         setStatus("ok");
         onAuthed(user);
-        // Clean up the ?auth= flag
         window.history.replaceState({}, "", "/");
       } else {
-        setStatus(auth === "missing" ? "missing" : "missing");
+        setStatus("missing");
         setMessage(
           "Please sign in through the PCW Ride app to access PCW Eats.",
         );
@@ -42,7 +40,16 @@ export const Welcome: React.FC<WelcomeProps> = ({ onAuthed }) => {
   }, [onAuthed]);
 
   return (
-    <div className="min-h-dvh bg-slate-900 text-white flex items-center justify-center p-6">
+    <div className="min-h-dvh bg-slate-900 text-white flex items-center justify-center p-6 relative">
+      {/* Staff sign-in — top right */}
+      <a
+        href="/login"
+        className="absolute top-4 right-4 inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800/70 border border-slate-700 text-xs font-semibold text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
+      >
+        <LogIn size={14} />
+        <span>Canteen Staff Sign In</span>
+      </a>
+
       <div className="w-full max-w-md text-center space-y-6">
         <div className="mx-auto w-16 h-16 bg-amber-400 rounded-2xl flex items-center justify-center">
           <Utensils className="text-slate-900" size={32} />
@@ -69,11 +76,11 @@ export const Welcome: React.FC<WelcomeProps> = ({ onAuthed }) => {
             </div>
             <p className="text-sm text-slate-300">{message}</p>
             {/* <a
-              href="https://pcwride.app" // ← replace with real PCW Ride URL
+              href="/login"
               className="inline-flex items-center justify-center gap-2 w-full px-4 py-3 rounded-xl bg-amber-400 text-slate-900 font-semibold hover:bg-amber-300 transition"
             >
               <LogIn size={18} />
-              Open PCW Ride app
+              Sign in as Canteen / Staff
             </a> */}
             <button
               onClick={() => window.location.reload()}

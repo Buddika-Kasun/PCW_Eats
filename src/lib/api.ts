@@ -2,8 +2,6 @@
  * ============================================================================
  * PCW Eats Frontend API Client (src/lib/api.ts)
  * ============================================================================
- * Strongly typed client for communicating with the Express backend (/api).
- * Modular and reusable across all components.
  */
 
 import {
@@ -14,11 +12,12 @@ import {
   Canteen,
   DailyReadyMadeBatch,
 } from "../types";
+import { getToken } from "./authToken";
 
 const BASE_URL = "/api";
 
 // ---------------------------------------------------------------------------
-// Shared shapes (mirrors server/db/store.ts interfaces)
+// Shared shapes
 // ---------------------------------------------------------------------------
 
 export interface User {
@@ -45,7 +44,8 @@ export interface TransactionRecord {
   date: string;
   time?: string;
   dept: string;
-  item: string;
+  departmentId?: string | null;
+  item: string; // meal ID or item ID (no prefix)
   qty: number;
   cost: number;
   type: "meal" | "snack";
@@ -53,6 +53,7 @@ export interface TransactionRecord {
   userId?: string;
   userName?: string;
   canteenId?: string;
+  status?: "ACTIVE" | "VOID";
 }
 
 export interface BiometricLog {
@@ -124,26 +125,342 @@ export interface MonthlyReport {
   transactions: TransactionRecord[];
 }
 
+export interface ActiveMeal extends Meal {
+  alreadyIssued?: boolean;
+}
+
+export interface ActiveMealsResponse {
+  success: boolean;
+  currentTime: string;
+  timezone?: string;
+  data: ActiveMeal[];
+  reason?: string;
+}
+
+export interface RecentMealRecord {
+  id: string;
+  time: string;
+  user: string;
+  userId: string;
+  dept: string;
+  departmentId?: string;
+  mealId: string;
+  meal: string;
+  cost: number;
+}
+
+// near the other shared shapes
+export interface Department {
+  id: number;
+  name: string;
+}
+
+export interface DepartmentListResponse {
+  success: boolean;
+  message?: string;
+  data: {
+    departments: Department[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+    };
+  };
+}
+
+// ---------------------------------------------------------------------------
+// User Dashboard
+// ---------------------------------------------------------------------------
+
+export interface DashboardUser {
+  id: string;
+  username: string;
+  name: string;
+  email: string;
+  phone: string;
+  role: string;
+  deptId: string;
+  deptName: string;
+}
+
+export type MealStatus = "taken" | "missed" | "eligible" | "upcoming";
+
+export interface DashboardMeal {
+  id: string;
+  code: string;
+  name: string;
+  cost: number;
+  eligibleFrom: string;
+  eligibleTo: string;
+  status: MealStatus;
+  takenAt?: string;
+}
+
+export interface DashboardQuotaItem {
+  itemId: string;
+  itemName: string;
+  uom: string;
+  eligibleQty: number;
+  takenQty: number;
+  remainingQty: number;
+}
+
+export interface UserDashboardResponse {
+  success: boolean;
+  message?: string;
+  data: {
+    user: DashboardUser;
+    meals: {
+      past: DashboardMeal[];
+      current: DashboardMeal[];
+      next: DashboardMeal[];
+    };
+    transactions: TransactionRecord[];
+    quotas: {
+      departmentId: string;
+      departmentName: string;
+      effectiveFrom: string;
+      items: DashboardQuotaItem[];
+    };
+    summary: {
+      todayMealsIssued: number;
+      todayMealsEligible: number;
+      totalTransactions: number;
+    };
+  };
+}
+
+export interface AdminDashboardResponse {
+  monthKey: string;
+  monthLabel: string;
+  totalCost: number;
+  prevCost: number;
+  costChange: string;
+  costTrend: "up" | "down";
+  totalMeals: number;
+  mealChange: string;
+  activeEmployees: number;
+  deptData: { name: string; cost: number }[];
+  topDepartments: {
+    name: string;
+    employees: number;
+    meals: number;
+    cost: string;
+    status: "High" | "Normal" | "Low";
+  }[];
+  monthlyTrend: { month: string; cost: number }[];
+  generatedAt: string;
+}
+
+export interface ReportTransaction {
+  id: string;
+  date: string;
+  time?: string | null;
+  dept: string;
+  departmentId?: string | null;
+  itemId?: string;
+  item: string; // resolved display name
+  itemCode?: string | null;
+  uom?: string | null;
+  qty: number;
+  cost: number;
+  type: string;
+  category?: string | null;
+  userId?: string | null;
+  userName?: string | null;
+  canteenId?: string | null;
+  canteenName?: string | null;
+}
+
+export interface ReportInventoryRow {
+  id: string;
+  itemId: string;
+  item: string;
+  uom: string;
+  stock: number;
+  minLevel: number;
+  status: "Good" | "Low";
+}
+
+export interface SpecialOrder {
+  id: string;
+  orderNo: string;
+  requesterId: string;
+  requesterName: string;
+  departmentId: string;
+  departmentName: string;
+  mealId: string;
+  mealName: string;
+  count: number;
+  releasedCount: number;
+  purpose: string;
+  guestRangeStart?: string | null;
+  guestRangeEnd?: string | null;
+  guestIds?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CreateSpecialOrderPayload {
+  requesterId: string;
+  requesterName?: string;
+  departmentId: string;
+  departmentName?: string;
+  mealId: string;
+  count: number;
+  purpose: string;
+}
+
+export interface SpecialOrderLookupOrder {
+  id: string;
+  orderNo: string;
+  requesterId: string;
+  requesterName: string;
+  departmentId: string;
+  departmentName: string;
+  mealId: string;
+  mealName: string;
+  count: number;
+  releasedCount: number;
+  remaining: number;
+  purpose: string;
+  guestRangeStart?: string | null;
+  guestRangeEnd?: string | null;
+  guestIds: string[];
+}
+
+export interface SpecialOrderLookupMeal {
+  id: string;
+  code: string;
+  name: string;
+  cost: number;
+  eligibleFrom: string;
+  eligibleTo: string;
+}
+
+export interface SpecialOrderLookupGuest {
+  id: string;
+  orderId: string;
+  orderNo: string;
+}
+
+export interface SpecialOrderLookupResponse {
+  success: boolean;
+  data: {
+    type: "order" | "guest" | "none";
+    order?: SpecialOrderLookupOrder;
+    guest?: SpecialOrderLookupGuest;
+    meal?: SpecialOrderLookupMeal;
+    eligible?: boolean;
+    remaining?: number;
+    reason?: string;
+  };
+}
+
+export interface ReleaseOrderResponse {
+  success: boolean;
+  data: {
+    order: SpecialOrderLookupOrder;
+    releasedCount: number;
+    remaining: number;
+    releasedGuestIds: string[];
+    transactions: string[];
+  };
+  message: string;
+}
+
+// ---------------------------------------------------------------------------
+// Canteen Dashboard
+// ---------------------------------------------------------------------------
+
+export interface CanteenSpecialOrderBreakdown {
+  id: string;
+  orderNo: string;
+  requesterName: string;
+  departmentName: string;
+  mealName: string;
+  count: number;
+  releasedCount: number;
+  remainingCount: number;
+  status: "issued" | "partial" | "pending";
+  guestRange: string | null;
+}
+
+export interface CanteenDashboardResponse {
+  success: boolean;
+  message?: string;
+  data: {
+    date: string;
+    canteenId: string | null;
+
+    meals: {
+      issuedCount: number; // total meal qty issued today (normal meals)
+      transactionRows: number;
+      totalCost: number;
+    };
+
+    specialOrders: {
+      total: number; // all active special orders today
+      issued: number; // orders with releasedCount > 0
+      pending: number; // orders not yet issued
+      totalGuests: number;
+      releasedGuests: number;
+      breakdown: CanteenSpecialOrderBreakdown[];
+    };
+
+    generatedAt: string;
+  };
+}
+
+export interface HikvisionConfig {
+  ip: string;
+  port: number;
+  protocol: "http" | "https";
+  username: string;
+  password: string;
+  timeout: number;
+  deviceName: string;
+  enabled: boolean;
+  mode: "real-hardware" | "simulation";
+}
+
+export interface HikvisionStatus {
+  connected: boolean;
+  config: HikvisionConfig;
+  lastHeartbeat: string;
+  recentLogsCount: number;
+  deviceInfo: {
+    model: string;
+    firmware: string;
+    algorithms: string;
+    capacity: {
+      faces: number;
+      fingerprints: number;
+      cards: number;
+      logs: number;
+    };
+    isapiBase: string;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Transport
 // ---------------------------------------------------------------------------
 
-/**
- * Low-level fetch wrapper. Throws on network/HTTP failure and on
- * `{ success: false }` bodies so callers can `try/catch` uniformly.
- * Pass `{ allowSoftFail: true }` for endpoints whose 200 body may carry
- * `success: false` (e.g. zkteco simulate-scan).
- */
 async function fetchJson<T>(
   url: string,
   options?: RequestInit & { allowSoftFail?: boolean },
 ): Promise<T> {
   const { allowSoftFail, ...init } = options ?? {};
+  const token = getToken();
 
   const response = await fetch(`${BASE_URL}${url}`, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init.headers ?? {}),
     },
   });
@@ -158,11 +475,9 @@ async function fetchJson<T>(
       body.message ?? `API error: ${response.status} ${response.statusText}`,
     );
   }
-
   if (!allowSoftFail && body.success === false) {
     throw new Error(body.message ?? "Request failed");
   }
-
   return body as unknown as T;
 }
 
@@ -180,6 +495,148 @@ function qs(params: Record<string, string | number | undefined>): string {
 // ---------------------------------------------------------------------------
 
 export const api = {
+  // Hikvision Biometric Device
+  hikvision: {
+    getStatus: () =>
+      fetchJson<{ success: boolean; data: HikvisionStatus }>(
+        "/hikvision/status",
+      ),
+
+    updateConfig: (config: Partial<HikvisionConfig>) =>
+      fetchJson<{
+        success: boolean;
+        data: HikvisionConfig;
+        message: string;
+      }>("/hikvision/config", {
+        method: "POST",
+        body: JSON.stringify(config),
+      }),
+
+    simulateScan: (employeeId?: string) =>
+      fetchJson<{
+        success: boolean;
+        data: {
+          success: boolean;
+          log: BiometricLog;
+          user: User | null;
+          message: string;
+        };
+      }>("/hikvision/simulate-scan", {
+        method: "POST",
+        body: JSON.stringify({ employeeId }),
+        allowSoftFail: true,
+      }),
+
+    punch: (data: {
+      userIdOrCard: string;
+      verifyType?: "face" | "fingerprint" | "card" | "password";
+      deviceId?: string;
+    }) =>
+      fetchJson<{
+        success: boolean;
+        verified: boolean;
+        employee?: User;
+        log: BiometricLog;
+        message: string;
+      }>("/hikvision/punch", {
+        method: "POST",
+        body: JSON.stringify(data),
+        allowSoftFail: true,
+      }),
+
+    getLogs: (limit?: number) =>
+      fetchJson<{
+        success: boolean;
+        data: BiometricLog[];
+        total: number;
+      }>(`/hikvision/logs${qs({ limit })}`),
+
+    subscribeEvents: (
+      onScan: (event: {
+        type: "biometric_scan";
+        log: BiometricLog;
+        user: User | null;
+        timestamp: string;
+      }) => void,
+    ) => {
+      const eventSource = new EventSource(`${BASE_URL}/hikvision/sse`);
+      eventSource.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === "biometric_scan") onScan(payload);
+        } catch (e) {
+          console.error("Failed to parse SSE event:", e);
+        }
+      };
+      eventSource.onerror = (err) => {
+        console.warn("SSE connection interrupted:", err);
+      };
+      return () => eventSource.close();
+    },
+  },
+  // Admin Dashboard
+  adminDashboard: {
+    get: (month: string = "current") =>
+      fetchJson<{ success: boolean; data: AdminDashboardResponse }>(
+        `/dashboard/admin${qs({ month })}`,
+      ),
+  },
+  // User Dashboard
+  dashboard: {
+    getUser: (userId: string) =>
+      fetchJson<UserDashboardResponse>(
+        `/dashboard/user/${encodeURIComponent(userId)}`,
+      ),
+  },
+  // Canteen Dashboard
+  canteenDashboard: {
+    get: (params?: { canteenId?: string; date?: string }) =>
+      fetchJson<CanteenDashboardResponse>(
+        `/dashboard/canteen${qs(params ?? {})}`,
+      ),
+  },
+  // Reports
+  reports: {
+    transactions: (params: {
+      type?: "snack" | "meal";
+      dept?: string;
+      range?: "current" | "last" | "last3" | "custom";
+      from?: string;
+      to?: string;
+    }) =>
+      fetchJson<{
+        success: boolean;
+        data: ReportTransaction[];
+        meta: {
+          range: string;
+          from: string;
+          to: string;
+          type: string | null;
+          dept: string | null;
+          count: number;
+          totalCost: number;
+          totalQty: number;
+        };
+      }>(`/reports/transactions${qs(params)}`),
+
+    inventory: () =>
+      fetchJson<{
+        success: boolean;
+        data: ReportInventoryRow[];
+        total: number;
+      }>("/reports/inventory"),
+
+    departments: () =>
+      fetchJson<{ success: boolean; data: string[] }>("/reports/departments"),
+
+    exportUrl: (params: {
+      type?: "snack" | "meal";
+      dept?: string;
+      range?: "current" | "last" | "last3" | "custom";
+      from?: string;
+      to?: string;
+    }) => `/api/reports/export${qs(params)}`,
+  },
   // Items
   items: {
     getAll: (category?: "stock-keeping" | "ready-made") =>
@@ -207,7 +664,7 @@ export const api = {
       ),
   },
 
-  // Daily Ready-Made Batches (Zero Rollover)
+  // Daily Ready-Made Batches
   batches: {
     getAll: () =>
       fetchJson<{
@@ -252,10 +709,14 @@ export const api = {
   meals: {
     getAll: () =>
       fetchJson<{ success: boolean; data: Meal[]; total: number }>("/meals"),
-    getActive: () =>
-      fetchJson<{ success: boolean; currentTime: string; data: Meal[] }>(
-        "/meals/active",
+
+    getActive: () => fetchJson<ActiveMealsResponse>("/meals/active"),
+
+    getActiveForUser: (userId: string) =>
+      fetchJson<ActiveMealsResponse>(
+        `/meals/active${qs({ userId, excludeIssued: "true" })}`,
       ),
+
     create: (meal: Partial<Meal>) =>
       fetchJson<{ success: boolean; data: Meal; message: string }>("/meals", {
         method: "POST",
@@ -271,6 +732,31 @@ export const api = {
         `/meals/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       ),
+  },
+
+  // Department
+  departments: {
+    getAll: async (params?: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      companyId?: number;
+      costCenterId?: number;
+    }): Promise<Department[]> => {
+      const res = await fetchJson<DepartmentListResponse>(
+        `/departments/get-all${qs({
+          page: params?.page,
+          limit: params?.limit,
+          search: params?.search,
+          companyId: params?.companyId,
+          costCenterId: params?.costCenterId,
+        })}`,
+      );
+      return (res.data?.departments ?? []).map((d) => ({
+        id: d.id,
+        name: d.name,
+      }));
+    },
   },
 
   // Department Quotas
@@ -295,6 +781,22 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ code, items }),
       }),
+    update: (
+      id: string,
+      patch: {
+        code?: string;
+        items?: { itemId: string; eligibleQty: number }[];
+      },
+    ) =>
+      fetchJson<{ success: boolean; data: Quota; message: string }>(
+        `/quotas/${encodeURIComponent(id)}`,
+        { method: "PUT", body: JSON.stringify(patch) },
+      ),
+    delete: (id: string) =>
+      fetchJson<{ success: boolean; message: string }>(
+        `/quotas/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      ),
     mapDepartment: (
       department: string,
       quotaId: string,
@@ -308,6 +810,28 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ department, quotaId, effectiveFrom }),
       }),
+    updateMapping: (
+      id: string,
+      patch: {
+        department?: string;
+        quotaId?: string;
+        effectiveFrom?: string;
+      },
+    ) =>
+      fetchJson<{
+        success: boolean;
+        data: DepartmentQuotaMap;
+        message: string;
+      }>(`/quotas/mapping/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      }),
+
+    deleteMapping: (id: string) =>
+      fetchJson<{ success: boolean; message: string }>(
+        `/quotas/mapping/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      ),
   },
 
   // Perpetual Inventory
@@ -355,6 +879,16 @@ export const api = {
         "/canteens",
         { method: "POST", body: JSON.stringify(data) },
       ),
+    update: (id: string, data: Partial<Canteen>) =>
+      fetchJson<{ success: boolean; data: Canteen; message: string }>(
+        `/canteens/${encodeURIComponent(id)}`,
+        { method: "PUT", body: JSON.stringify(data) },
+      ),
+    delete: (id: string) =>
+      fetchJson<{ success: boolean; data: Canteen; message: string }>(
+        `/canteens/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      ),
   },
 
   // Transactions & Issuing
@@ -370,19 +904,37 @@ export const api = {
         data: TransactionRecord[];
         total: number;
       }>(`/transactions${qs(params ?? {})}`),
+
+    recentMeals: (limit = 10) =>
+      fetchJson<{
+        success: boolean;
+        date: string;
+        data: RecentMealRecord[];
+        total: number;
+      }>(`/transactions/recent-meals${qs({ limit })}`),
+
     issueMeal: (data: {
       employeeId: string;
       mealId: string;
       canteenId?: string;
+      dept?: string;
+      departmentId?: string | number;
+      userName?: string;
     }) =>
       fetchJson<{
         success: boolean;
-        data: TransactionRecord;
+        data: TransactionRecord & {
+          mealName?: string;
+          userName?: string;
+          dept?: string;
+          departmentId?: string | null;
+        };
         message: string;
       }>("/transactions/issue-meal", {
         method: "POST",
         body: JSON.stringify(data),
       }),
+
     issueSnack: (data: {
       department: string;
       userId?: string;
@@ -399,7 +951,86 @@ export const api = {
       }),
   },
 
-  // ZKTeco MB360 Biometric Hardware
+  // Special Orders
+  specialOrders: {
+    create: (data: CreateSpecialOrderPayload) =>
+      fetchJson<{
+        success: boolean;
+        data: SpecialOrder & {
+          guestRange: {
+            start: string | null;
+            end: string | null;
+            ids: string[];
+          };
+        };
+        message: string;
+      }>("/special-orders", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    list: (params?: { userId?: string; deptId?: string; month?: string }) =>
+      fetchJson<{
+        success: boolean;
+        data: SpecialOrder[];
+        total: number;
+      }>(`/special-orders${qs(params ?? {})}`),
+
+    getById: (id: string) =>
+      fetchJson<{ success: boolean; data: SpecialOrder }>(
+        `/special-orders/${encodeURIComponent(id)}`,
+      ),
+
+    update: (
+      id: string,
+      patch: {
+        purpose?: string;
+        mealId?: string;
+        count?: number;
+        updatedBy?: string;
+      },
+    ) =>
+      fetchJson<{
+        success: boolean;
+        data: SpecialOrder & {
+          guestRange: {
+            start: string | null;
+            end: string | null;
+            ids: string[];
+          };
+        };
+        message: string;
+      }>(`/special-orders/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      }),
+
+    remove: (id: string, updatedBy?: string) =>
+      fetchJson<{ success: boolean; message: string }>(
+        `/special-orders/${encodeURIComponent(id)}${qs({ updatedBy })}`,
+        { method: "DELETE" },
+      ),
+
+    lookup: (code: string) =>
+      fetchJson<SpecialOrderLookupResponse>(
+        `/special-orders/lookup/${encodeURIComponent(code)}`,
+      ),
+
+    release: (
+      id: string,
+      data: {
+        count: number;
+        canteenId?: string;
+        releasedBy?: string;
+      },
+    ) =>
+      fetchJson<ReleaseOrderResponse>(
+        `/special-orders/${encodeURIComponent(id)}/release`,
+        { method: "POST", body: JSON.stringify(data) },
+      ),
+  },
+
+  // ZKTeco
   zkteco: {
     getStatus: () =>
       fetchJson<{ success: boolean; data: ZktecoStatus }>("/zkteco/status"),
@@ -424,7 +1055,7 @@ export const api = {
       }>("/zkteco/simulate-scan", {
         method: "POST",
         body: JSON.stringify({ employeeId }),
-        allowSoftFail: true, // unknown employee returns 200 with success:false
+        allowSoftFail: true,
       }),
     punch: (data: {
       userIdOrCard: string;
@@ -449,10 +1080,6 @@ export const api = {
         total: number;
       }>(`/zkteco/logs${qs({ limit })}`),
 
-    /**
-     * Connects to the Server-Sent Events (SSE) stream for instant real-time
-     * punch capture. Returns an unsubscribe function for useEffect cleanup.
-     */
     subscribeEvents: (
       onScan: (event: {
         type: "biometric_scan";
@@ -462,55 +1089,31 @@ export const api = {
       }) => void,
     ) => {
       const eventSource = new EventSource(`${BASE_URL}/zkteco/events`);
-
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.type === "biometric_scan") {
-            onScan(payload);
-          }
+          if (payload.type === "biometric_scan") onScan(payload);
         } catch (e) {
           console.error("Failed to parse SSE event:", e);
         }
       };
-
       eventSource.onerror = (err) => {
-        console.warn(
-          "SSE connection interrupted, browser will auto-reconnect:",
-          err,
-        );
+        console.warn("SSE connection interrupted:", err);
       };
-
-      return () => {
-        eventSource.close();
-      };
+      return () => eventSource.close();
     },
   },
 
-  // Reports & Analytics
-  reports: {
-    getDashboard: (month: string = "current") =>
-      fetchJson<{ success: boolean; data: DashboardData }>(
-        `/reports/dashboard${qs({ month })}`,
-      ),
-    getMonthly: (month: string) =>
-      fetchJson<{ success: boolean } & MonthlyReport>(
-        `/reports/monthly${qs({ month })}`,
-      ),
-    getSummary: () =>
-      fetchJson<{
-        success: boolean;
-        totalTransactions: number;
-        totalCost: number;
-        totalQty: number;
-        deptBalances: Record<string, Record<string, number>>;
-      }>("/reports/summary"),
-    getUsers: () =>
+  users: {
+    search: (query: string) =>
       fetchJson<{ success: boolean; data: User[]; total: number }>(
-        "/reports/users",
+        `/users/search${qs({ query })}`,
+      ),
+    getById: (id: string) =>
+      fetchJson<{ success: boolean; data: User }>(
+        `/users/${encodeURIComponent(id)}`,
       ),
   },
 };
 
-// Convenience re-export so components can `import { api, User } from '../lib/api'`
 export type { User as ApiUser };

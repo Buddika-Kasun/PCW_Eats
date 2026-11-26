@@ -1,14 +1,4 @@
-/**
- * ============================================================================
- * Item Management Routes (/api/items) — Prisma/PostgreSQL
- * ============================================================================
- * Supports retrieving, creating, updating, and deleting canteen items.
- * Distinguishes between:
- * - 'stock-keeping' items (tea, coffee, biscuits) which track perpetual inventory and quotas.
- * - 'ready-made' items (fish buns, vegetable samosas) which are fresh daily batches with zero rollover.
- */
-
-import { Router, Request, Response } from "express";
+import { Router, Response, Request } from "express";
 import {
   getItems,
   createItem,
@@ -20,37 +10,41 @@ import { Item } from "../../src/types";
 
 const router = Router();
 
-// GET /api/items - Retrieve all items (optional ?category= filter)
+/** Resolve the human identifier for audit columns. */
+function actorOf(req: Request): string | null {
+  const u = req.user;
+  if (!u) return null;
+  return String(u.id ?? u.username ?? u.email ?? "") || null;
+}
+
+// GET — unchanged
 router.get("/", async (req: Request, res: Response) => {
   try {
     const { category } = req.query;
     let result = await getItems();
-    if (category) {
-      result = result.filter((item) => item.category === category);
-    }
+    if (category) result = result.filter((i) => i.category === category);
     res.json({ success: true, data: result, total: result.length });
   } catch (e) {
     res.status(500).json({ success: false, message: (e as Error).message });
   }
 });
 
-// GET /api/items/:id - Retrieve item by ID
+// GET by id — unchanged
 router.get("/:id", async (req: Request, res: Response) => {
   try {
     const items = await getItems();
     const item = items.find((i) => i.id === req.params.id);
-    if (!item) {
+    if (!item)
       return res
         .status(404)
         .json({ success: false, message: "Item not found" });
-    }
     res.json({ success: true, data: item });
   } catch (e) {
     res.status(500).json({ success: false, message: (e as Error).message });
   }
 });
 
-// POST /api/items - Create new item
+// POST — record createdBy / updatedBy
 router.post("/", async (req: Request, res: Response) => {
   try {
     const {
@@ -69,6 +63,8 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
+    const actor = actorOf(req);
+
     const newItem: Item = {
       id: `itm-${Date.now()}`,
       code,
@@ -77,11 +73,13 @@ router.post("/", async (req: Request, res: Response) => {
       price: Number(price),
       category,
       shelfLife,
-    };
+      // audit fields (extend the Item type accordingly)
+      createdBy: actor ?? undefined,
+      updatedBy: actor ?? undefined,
+    } as Item;
 
     const created = await createItem(newItem);
 
-    // If stock-keeping, also ensure an inventory record exists
     if (created.category === "stock-keeping") {
       await createInventoryRecord({
         id: `inv-${Date.now()}`,
@@ -104,27 +102,27 @@ router.post("/", async (req: Request, res: Response) => {
   }
 });
 
-// PUT /api/items/:id - Update item
+// PUT — record updatedBy
 router.put("/:id", async (req: Request, res: Response) => {
   try {
     const existingItems = await getItems();
     const existing = existingItems.find((i) => i.id === req.params.id);
-    if (!existing) {
+    if (!existing)
       return res
         .status(404)
         .json({ success: false, message: "Item not found" });
-    }
 
     const updated = await updateItem(existing.id, {
       ...req.body,
-      id: existing.id, // preserved by the helper anyway, kept for clarity
+      id: existing.id,
+      updatedBy: actorOf(req) ?? undefined, // overwrite on every edit
+      // createdBy: existing.createdBy  — leave as-is
     });
 
-    if (!updated) {
+    if (!updated)
       return res
         .status(404)
         .json({ success: false, message: "Item not found" });
-    }
 
     res.json({
       success: true,
@@ -136,23 +134,21 @@ router.put("/:id", async (req: Request, res: Response) => {
   }
 });
 
-// DELETE /api/items/:id - Delete item
+// DELETE — unchanged
 router.delete("/:id", async (req: Request, res: Response) => {
   try {
     const existingItems = await getItems();
     const existing = existingItems.find((i) => i.id === req.params.id);
-    if (!existing) {
+    if (!existing)
       return res
         .status(404)
         .json({ success: false, message: "Item not found" });
-    }
 
     const ok = await deleteItem(existing.id);
-    if (!ok) {
+    if (!ok)
       return res
         .status(404)
         .json({ success: false, message: "Item not found" });
-    }
 
     res.json({
       success: true,

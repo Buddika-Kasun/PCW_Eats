@@ -15,6 +15,8 @@ import morgan from "morgan";
 import { createServer as createViteServer } from "vite";
 import { apiRouter } from "./server/routes";
 import { prisma } from "./server/db/prisma";
+import { verifyLocalToken } from "./server/services/localAuth";
+import cookieParser from "cookie-parser";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -84,6 +86,44 @@ async function startServer() {
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
+  app.use(cookieParser());
+
+  app.use("/api", (req, _res, next) => {
+    if (!req.headers.authorization && req.cookies?.sid) {
+      req.headers.authorization = `Bearer ${req.cookies.sid}`;
+    }
+    next();
+  });
+
+  app.use("/api", async (req: any, _res, next) => {
+    const auth = req.headers.authorization;
+    if (typeof auth !== "string" || !auth.startsWith("Bearer ")) return next();
+
+    const token = auth.slice(7);
+
+    // 1) Local staff token (signed HMAC)
+    if (token.startsWith("local.")) {
+      const user = verifyLocalToken(token);
+      if (user) req.user = user;
+      return next();
+    }
+
+    // 2) PCW Ride SSO token — ask upstream
+    try {
+      const r = await fetch(`${PCW_RIDE_API_URL}/auth/validate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (r.ok) {
+        const data = await r.json();
+        req.user = data.user ?? data;
+      }
+    } catch (err) {
+      console.warn("Auth middleware validation failed:", err);
+    }
+    next();
+  });
+
   app.use((req, res, next) => {
     if (["POST", "PUT", "PATCH"].includes(req.method)) {
       const contentType = req.headers["content-type"] || "";
@@ -100,6 +140,22 @@ async function startServer() {
     }
     next();
   });
+
+  /* -------------------------------------------------------------------------- */
+  /* 2. RAW body capture for the Hikvision HTTP Listener                        */
+  /*    MUST come before express.json() so the device's multipart body is       */
+  /*    preserved as a string. Otherwise express.json() swallows it → {}.       */
+  /* -------------------------------------------------------------------------- */
+  app.use(
+    "/api/hikvision/events",
+    express.text({ type: () => true, limit: "2mb" }),
+  );
+
+  /* -------------------------------------------------------------------------- */
+  /* 3. Global body parsers (JSON + urlencoded)                                 */
+  /* -------------------------------------------------------------------------- */
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
   app.use("/api", apiRouter);
 
@@ -192,8 +248,8 @@ async function startServer() {
 
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log("====================================================");
-    console.log(`🚀 PCW Eats Server running on ${APP_URL}:${PORT}`);
-    console.log(`📡 API Endpoints live at ${APP_URL}:${PORT}/api`);
+    console.log(`🚀 PCW Eats Server running on ${APP_URL}`);
+    console.log(`📡 API Endpoints live at ${APP_URL}/api`);
     console.log(`🫆 ZKTeco MB360 Bridge online at /api/zkteco`);
     console.log(`🔗 PCW Ride backend: ${PCW_RIDE_API_URL}`);
     console.log("====================================================");

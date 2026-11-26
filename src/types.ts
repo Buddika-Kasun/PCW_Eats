@@ -14,7 +14,13 @@ export interface Item {
   uom: UOM;
   price: number;
   category?: ItemCategory; // 'stock-keeping' (tea, coffee, biscuits) or 'ready-made' (fish bun, fish roll)
-  shelfLife?: 'perpetual' | 'daily'; // 'daily' perishes at end of day, cannot keep for next day
+  shelfLife?: "perpetual" | "daily"; // 'daily' perishes at end of day, cannot keep for next day
+  
+  // audit
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DailyReadyMadeBatch {
@@ -38,7 +44,13 @@ export interface Meal {
   name: string;
   cost: number;
   eligibleFrom: string; // HH:mm
-  eligibleTo: string;   // HH:mm
+  eligibleTo: string; // HH:mm
+
+  // audit
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface QuotaItem {
@@ -50,6 +62,10 @@ export interface Quota {
   id: string;
   code: string;
   items: QuotaItem[];
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DepartmentQuotaMap {
@@ -57,13 +73,20 @@ export interface DepartmentQuotaMap {
   department: string;
   effectiveFrom: string; // YYYY-MM-DD
   quotaId: string;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Canteen {
   id: string;
   code: string;
   name: string;
-  type: 'Main' | 'Snack Bar' | 'Executive';
+  type: "Main" | "Snack Bar" | "Executive";
+
+  createdBy?: string | null;
+  updatedBy?: string | null;
 }
 
 export interface InventoryItem {
@@ -86,12 +109,13 @@ export interface Transaction {
   canteenId: string;
 }
 
-export type View = 
-  | 'admin-dashboard' 
-  | 'item-management' 
-  | 'meal-management' 
-  | 'quota-management' 
-  | 'canteen-management' 
-  | 'reports'
-  | 'user-dashboard'
-  | 'canteen-interface';
+export type View =
+  | "admin-dashboard"
+  | "item-management"
+  | "meal-management"
+  | "quota-management"
+  | "canteen-management"
+  | "reports"
+  | "user-dashboard"
+  | "special-orders"
+  | "canteen-interface";
