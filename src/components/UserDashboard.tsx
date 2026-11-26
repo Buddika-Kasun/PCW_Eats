@@ -19,11 +19,13 @@ import {
   CalendarX2,
   Coins,
   ShieldAlert,
+  ShoppingBag,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { cn } from "../lib/utils";
 import { getCachedUser } from "../lib/auth";
 import { api, UserDashboardResponse, DashboardMeal } from "../lib/api";
+import { isAdminRole } from "../lib/roles";
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                     */
@@ -68,11 +70,20 @@ const fmtTakenAt = (takenAt?: string) => {
 /* -------------------------------------------------------------------------- */
 /* Component                                                                   */
 /* -------------------------------------------------------------------------- */
+interface UserDashboardProps {
+  onOpenSpecialOrders?: (mode: "list" | "create") => void;
+}
 
-const UserDashboard: React.FC = () => {
+const UserDashboard: React.FC<UserDashboardProps> = ({
+  onOpenSpecialOrders,
+}) => {
   const cached = getCachedUser();
   const userId =
-    cached?.id != null ? (cached?.id == 1000 ? "999999" : String(cached.id)) : "";
+    cached?.id != null
+      ? cached?.id == 1000
+        ? "999999"
+        : String(cached.id)
+      : "";
 
   const [data, setData] = useState<UserDashboardResponse["data"] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -522,6 +533,41 @@ const UserDashboard: React.FC = () => {
               </p>
             </div>
           </div>
+
+          {/* Special Orders card — admin-only */}
+          {isAdminRole(cached) && (
+            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center">
+                  <ShoppingBag size={20} />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900">Special Orders</h4>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Bulk meals for guests & trainings
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    onOpenSpecialOrders?.("create");
+                  }}
+                  className="py-2.5 bg-slate-900 text-white rounded-xl font-black text-xs hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  + New Order
+                </button>
+                <button
+                  onClick={() => {
+                    onOpenSpecialOrders?.("list");
+                  }}
+                  className="py-2.5 bg-slate-100 text-slate-700 rounded-xl font-black text-xs hover:bg-slate-200 transition-colors cursor-pointer"
+                >
+                  View Orders
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="bg-amber-50 p-8 rounded-[2.5rem] border border-amber-100 space-y-4">
             <h4 className="font-bold text-amber-900">Need Help?</h4>

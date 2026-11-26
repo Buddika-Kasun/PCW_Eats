@@ -5,6 +5,9 @@
  * Meal-issuing terminal. Times use Asia/Colombo (Sri Lanka).
  * Sends the full user payload (dept, userName) so the server never
  * has to invent them. `item` is saved as the raw meal ID.
+ *
+ * Also subscribes to /api/hikvision/sse so a physical fingerprint scan
+ * auto-fills the input and triggers the normal search/eligibility flow.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -16,11 +19,24 @@ import {
   ChevronRight,
   Loader2,
   RefreshCw,
+  QrCode,
+  X,
+  Camera,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { api, ActiveMeal, RecentMealRecord } from "../../lib/api";
+import { BrowserQRCodeReader } from "@zxing/browser";
+import {
+  api,
+  ActiveMeal,
+  RecentMealRecord,
+  SpecialOrderLookupOrder,
+  SpecialOrderLookupGuest,
+  SpecialOrderLookupMeal,
+} from "../../lib/api";
 import { Meal } from "../../types";
 import { hhmmToAmPm } from "@/src/lib/date";
+import { getCachedUser } from "@/src/lib/auth";
+import { cn } from "../../lib/utils";
 
 interface IssueMealsScreenProps {
   canteenId?: string;
@@ -38,6 +54,163 @@ interface DirectoryUser {
 interface FoundUser extends DirectoryUser {
   eligibleMeals: ActiveMeal[];
 }
+
+/* -------------------------------------------------------------------------- */
+/* QR scan modal — opens the rear camera, decodes the first QR, then closes.   */
+/* -------------------------------------------------------------------------- */
+const QrScanModal: React.FC<{
+  open: boolean;
+  onClose: () => void;
+  onResult: (text: string) => void;
+}> = ({ open, onClose, onResult }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const controlsRef = useRef<{ stop: () => void } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+    setError(null);
+    setStarting(true);
+
+    const reader = new BrowserQRCodeReader();
+
+    (async () => {
+      try {
+        const controls = await reader.decodeFromConstraints(
+          {
+            video: { facingMode: { ideal: "environment" } },
+            audio: false,
+          },
+          videoRef.current!,
+          (result) => {
+            if (cancelled) return;
+            if (!result) return;
+            const text = result.getText().trim();
+            if (!text) return;
+            cancelled = true;
+            controlsRef.current?.stop();
+            controlsRef.current = null;
+            onResult(text);
+          },
+        );
+        controlsRef.current = controls;
+        if (!cancelled) setStarting(false);
+      } catch (e: any) {
+        if (cancelled) return;
+        setStarting(false);
+        setError(
+          e?.message ??
+            "Could not start the camera. Check permissions and that no other app is using it.",
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controlsRef.current?.stop();
+      controlsRef.current = null;
+    };
+  }, [open, onResult]);
+
+  if (!open) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+    >
+      <div
+        onClick={onClose}
+        className="absolute inset-0 bg-slate-900/70 backdrop-blur-sm"
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden"
+      >
+        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+            <Camera size={18} className="text-amber-500" />
+            Scan QR Code
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="relative aspect-square w-full bg-slate-900 rounded-2xl overflow-hidden">
+            <video
+              ref={videoRef}
+              className="absolute inset-0 w-full h-full object-cover"
+              muted
+              playsInline
+            />
+            <div className="absolute inset-6 pointer-events-none">
+              <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-amber-400 rounded-tl-lg" />
+              <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-amber-400 rounded-tr-lg" />
+              <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-amber-400 rounded-bl-lg" />
+              <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-amber-400 rounded-br-lg" />
+            </div>
+            {starting && (
+              <div className="absolute inset-0 flex items-center justify-center bg-slate-900/60 text-white text-xs font-bold gap-2">
+                <Loader2 size={16} className="animate-spin" />
+                Starting camera…
+              </div>
+            )}
+          </div>
+
+          {error && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold flex items-start gap-2">
+              <AlertCircle size={16} className="shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <p className="text-[11px] text-slate-500 text-center">
+            Point the camera at an order QR (e.g.&nbsp;
+            <span className="font-mono font-bold text-slate-700">M1</span>). The
+            result will be entered and searched automatically.
+          </p>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
+/* -------------------------------------------------------------------------- */
+/* Biometric scan subscription (Hikvision DS-K1T343 via /api/hikvision/sse)   */
+/* -------------------------------------------------------------------------- */
+function useBiometricScan(
+  enabled: boolean,
+  onScan: (employeeNo: string) => void,
+) {
+  useEffect(() => {
+    if (!enabled) return;
+    const unsubscribe = api.hikvision.subscribeEvents((event) => {
+      if (event.type !== "biometric_scan") return;
+      const log = event.log;
+      // console.log(">>> log.status:", log.status, "employeeNo:", log.employeeNo);
+      if (!log || log.status !== "verified") return;
+      const employeeNo = String(log.employeeNo ?? "").trim();
+      if (!employeeNo) return;
+      onScan(employeeNo);
+    });
+    return () => unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
+}
+
+/* -------------------------------------------------------------------------- */
 
 export const IssueMealsScreen: React.FC<IssueMealsScreenProps> = ({
   canteenId,
@@ -59,12 +232,45 @@ export const IssueMealsScreen: React.FC<IssueMealsScreenProps> = ({
   const [mealsLoading, setMealsLoading] = useState(false);
   const [mealsReason, setMealsReason] = useState<string | null>(null);
   const [issuing, setIssuing] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+
+  const [specialOrder, setSpecialOrder] =
+    useState<SpecialOrderLookupOrder | null>(null);
+  const [specialGuest, setSpecialGuest] =
+    useState<SpecialOrderLookupGuest | null>(null);
+  const [specialMeal, setSpecialMeal] = useState<SpecialOrderLookupMeal | null>(
+    null,
+  );
+  const [specialEligible, setSpecialEligible] = useState(false);
+  const [releaseQty, setReleaseQty] = useState<number>(1);
+  const [specialRemaining, setSpecialRemaining] = useState<number>(0);
+  const [releasingSpecial, setReleasingSpecial] = useState(false);
+
+  // NEW: scanner liveness indicator (fingerprint terminal via SSE)
+  const [scannerLive, setScannerLive] = useState(false);
 
   const mealInputRef = useRef<HTMLInputElement>(null);
+  // NEW: keeps a live reference to the scan handler so we don't re-subscribe
+  // to SSE on every render.
+  const handleScanFromDeviceRef = useRef<(employeeNo: string) => void>(
+    () => {},
+  );
 
   useEffect(() => {
     mealInputRef.current?.focus();
   }, []);
+
+  /* NEW: probe the SSE stream once so the "Scanner Live" pill reflects
+   * reality — the first handshake sets the flag. */
+  useEffect(() => {
+    const unsub = api.hikvision.subscribeEvents(() => setScannerLive(true));
+    return () => unsub();
+  }, []);
+
+  /* NEW: subscribe to fingerprint scans from the device. */
+  useBiometricScan(true, (employeeNo) => {
+    handleScanFromDeviceRef.current(employeeNo);
+  });
 
   const loadRecentMeals = useCallback(async () => {
     setRecentLoading(true);
@@ -109,7 +315,7 @@ export const IssueMealsScreen: React.FC<IssueMealsScreenProps> = ({
       role: u.role,
       email: u.email,
     };
-    setMealUserId('#' + normalized.id);
+    setMealUserId("#" + normalized.id);
     setShowUserDropdown(false);
     setUserMatches([]);
     setMealSearchError(null);
@@ -126,6 +332,11 @@ export const IssueMealsScreen: React.FC<IssueMealsScreenProps> = ({
     setFoundMealUser(null);
     setShowUserDropdown(false);
     setMealsReason(null);
+    setSpecialOrder(null);
+    setSpecialGuest(null);
+    setSpecialMeal(null);
+    setSpecialEligible(false);
+    setSpecialRemaining(0);
 
     if (!q) {
       setUserMatches([]);
@@ -133,6 +344,54 @@ export const IssueMealsScreen: React.FC<IssueMealsScreenProps> = ({
       return;
     }
 
+    // ---- Special order / guest detection ---------------------------
+    const stripped = q.replace(/^#/, "").toUpperCase();
+    const looksLikeOrder = /^M\d+$/.test(stripped);
+    const looksLikeGuest = /^S\d+$/.test(stripped);
+
+    if (looksLikeOrder || looksLikeGuest) {
+      setSearching(true);
+      try {
+        const res = await api.specialOrders.lookup(q);
+        const d = res.data;
+        if (d.type === "none") {
+          setMealSearchError(d.reason ?? "Code not found.");
+          return;
+        }
+        if (d.type === "order" && d.order) {
+          setSpecialOrder(d.order);
+          setSpecialMeal(d.meal ?? null);
+          setSpecialRemaining(d.remaining ?? 0);
+          setSpecialEligible(!!d.eligible);
+          setReleaseQty(Math.min(1, d.remaining ?? 0) || 1);
+          if (!d.eligible) {
+            setMealSearchError(d.reason ?? "Order not eligible right now.");
+          }
+          return;
+        }
+        if (d.type === "guest" && d.guest && d.order) {
+          setSpecialGuest(d.guest);
+          setSpecialOrder(d.order);
+          setSpecialMeal(d.meal ?? null);
+          setSpecialRemaining(1);
+          setSpecialEligible(!!d.eligible);
+          setReleaseQty(d.remaining ? Math.min(1, d.remaining) : 1);
+          if (!d.eligible) {
+            setMealSearchError(d.reason ?? "Guest not eligible right now.");
+          }
+          return;
+        }
+      } catch (err: unknown) {
+        setMealSearchError(
+          err instanceof Error ? err.message : "Special order lookup failed",
+        );
+      } finally {
+        setSearching(false);
+      }
+      return;
+    }
+
+    // ---- Existing behaviour (unchanged) ----------------------------
     setSearching(true);
     try {
       const res = await api.users.search(q);
@@ -159,6 +418,28 @@ export const IssueMealsScreen: React.FC<IssueMealsScreenProps> = ({
     } finally {
       setSearching(false);
     }
+  };
+
+  /* NEW: keeps the ref pointing at the latest closure so the SSE callback
+   * always sees the current state and handler. */
+  handleScanFromDeviceRef.current = (employeeNo: string) => {
+    // console.log("Handling scan:", employeeNo);
+
+    setShowUserDropdown(false);
+    setUserMatches([]);
+    setMealSearchError(null);
+    setMealsReason(null);
+    setFoundMealUser(null);
+    setSpecialOrder(null);
+    setSpecialGuest(null);
+    setSpecialMeal(null);
+    setSpecialEligible(false);
+    setSpecialRemaining(0);
+
+    setMealUserId(`#${employeeNo}`);
+    setTimeout(() => {
+      void handleUserSearch(`#${employeeNo}`);
+    }, 0);
   };
 
   const handleScan = async (scannedId: string) => {
@@ -226,6 +507,65 @@ export const IssueMealsScreen: React.FC<IssueMealsScreenProps> = ({
     }
   };
 
+  const doRelease = async (qty: number) => {
+    if (!specialOrder) return;
+    if (!specialEligible) return;
+    if (qty < 1 || qty > specialRemaining) {
+      setMealSearchError(
+        `Choose a quantity between 1 and ${specialRemaining}.`,
+      );
+      return;
+    }
+    setReleasingSpecial(true);
+    try {
+      const res = await api.specialOrders.release(specialOrder.id, {
+        count: specialGuest ? 1 : qty,
+        canteenId: canteenId || "1",
+        releasedBy: getCachedUser()?.id
+          ? String(getCachedUser()!.id)
+          : undefined,
+      });
+      setLastIssuedNotice({
+        user: specialGuest
+          ? `Guest ${specialGuest.id}`
+          : `${res.data.releasedCount} guest meals`,
+        meal: specialOrder.mealName,
+        cost: specialMeal?.cost ?? 0,
+      });
+      setSpecialOrder(null);
+      setSpecialGuest(null);
+      setSpecialMeal(null);
+      setSpecialEligible(false);
+      setSpecialRemaining(0);
+      setMealUserId("");
+      void loadRecentMeals();
+      setTimeout(() => setLastIssuedNotice(null), 4000);
+    } catch (err: unknown) {
+      setMealSearchError(
+        err instanceof Error ? err.message : "Failed to release order",
+      );
+    } finally {
+      setReleasingSpecial(false);
+    }
+  };
+
+  const handleReleaseBulk = () => doRelease(releaseQty);
+  const handleReleaseAll = () => doRelease(specialRemaining);
+
+  /* QR result handler — paste into field and auto-search */
+  const handleQrResult = useCallback(
+    (text: string) => {
+      setQrOpen(false);
+      const cleaned = text.trim();
+      setMealUserId(cleaned);
+      setTimeout(() => {
+        void handleUserSearch(cleaned);
+      }, 0);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
   const noMealTitle = mealsReason?.toLowerCase().includes("already")
     ? "Meal Already Issued"
     : "No Meal Available Right Now";
@@ -283,49 +623,88 @@ export const IssueMealsScreen: React.FC<IssueMealsScreenProps> = ({
               <label className="block text-xs font-black text-slate-500 uppercase tracking-wider text-left">
                 #Employee ID / Name
               </label>
-              <span className="text-[11px] text-slate-400">
-                Scan, type Name/#ID then press Enter
-              </span>
+              <div className="flex items-center gap-2">
+                {/* NEW: Scanner Live indicator */}
+                <span
+                  title={
+                    scannerLive
+                      ? "Fingerprint scanner connected"
+                      : "Scanner stream offline"
+                  }
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                    scannerLive
+                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      : "bg-slate-100 text-slate-500 border border-slate-200",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "w-1.5 h-1.5 rounded-full",
+                      scannerLive
+                        ? "bg-emerald-500 animate-pulse"
+                        : "bg-slate-400",
+                    )}
+                  />
+                  {scannerLive ? "Scanner Live" : "Scanner Offline"}
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  Scan, type Name/#ID then press Enter
+                </span>
+              </div>
             </div>
 
             <div className="relative">
-              <div className="relative flex items-center">
-                <div className="absolute left-5 text-slate-400 pointer-events-none">
-                  {searching ? (
-                    <Loader2 className="animate-spin" size={24} />
-                  ) : (
-                    <Fingerprint size={24} />
-                  )}
+              <div className="relative flex flex-col md:flex-row items-center gap-2">
+                <div className="relative flex-1">
+                  <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                    {searching ? (
+                      <Loader2 className="animate-spin" size={24} />
+                    ) : (
+                      <Fingerprint size={24} />
+                    )}
+                  </div>
+                  <input
+                    ref={mealInputRef}
+                    type="text"
+                    value={mealUserId}
+                    onChange={(e) => {
+                      setMealUserId(e.target.value);
+                      setShowUserDropdown(false);
+                      if (mealSearchError) setMealSearchError(null);
+                      if (foundMealUser) setFoundMealUser(null);
+                      if (mealsReason) setMealsReason(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void handleUserSearch();
+                      }
+                    }}
+                    placeholder="Scan fingerprint or type Employee ID/Name…"
+                    autoFocus
+                    className="w-full pl-14 pr-4 py-5 bg-slate-50 border-2 border-slate-200 rounded-2xl text-xl font-bold focus:border-amber-400 focus:bg-white focus:ring-4 focus:ring-amber-400/10 outline-none transition-all"
+                  />
                 </div>
-                <input
-                  ref={mealInputRef}
-                  type="text"
-                  value={mealUserId}
-                  onChange={(e) => {
-                    setMealUserId(e.target.value);
-                    setShowUserDropdown(false);
-                    if (mealSearchError) setMealSearchError(null);
-                    if (foundMealUser) setFoundMealUser(null);
-                    if (mealsReason) setMealsReason(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void handleUserSearch();
-                    }
-                  }}
-                  placeholder="Scan fingerprint or type Employee ID/Name…"
-                  autoFocus
-                  className="w-full pl-14 pr-32 py-5 bg-slate-50 border-2 border-slate-200 rounded-2xl text-xl font-bold focus:border-amber-400 focus:bg-white focus:ring-4 focus:ring-amber-400/10 outline-none transition-all"
-                />
-                <button
-                  type="button"
-                  onClick={() => void handleUserSearch()}
-                  disabled={searching}
-                  className="absolute right-3 px-5 py-3 bg-amber-400 hover:bg-amber-500 disabled:opacity-60 text-slate-900 rounded-xl font-black text-sm transition-all shadow-md shadow-amber-400/20 cursor-pointer"
-                >
-                  {searching ? "…" : "Search"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleUserSearch()}
+                    disabled={searching}
+                    className="px-5 py-5 bg-amber-400 hover:bg-amber-500 disabled:opacity-60 text-slate-900 rounded-2xl font-black text-sm transition-all shadow-md shadow-amber-400/20 cursor-pointer"
+                  >
+                    {searching ? "…" : "Search"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQrOpen(true)}
+                    disabled={searching}
+                    title="Scan QR code"
+                    className="px-5 py-5 bg-slate-900 text-white rounded-2xl font-black text-sm hover:bg-slate-800 disabled:opacity-60 transition-all shadow-md cursor-pointer flex items-center justify-center"
+                  >
+                    <QrCode size={22} />
+                  </button>
+                </div>
               </div>
 
               <AnimatePresence>
@@ -374,6 +753,154 @@ export const IssueMealsScreen: React.FC<IssueMealsScreenProps> = ({
             </div>
           )}
         </div>
+
+        {specialOrder && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="max-w-xl mx-auto p-6 bg-violet-50 border-2 border-violet-200 rounded-3xl space-y-4 text-left"
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between border-b border-violet-200 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded bg-violet-600 text-white text-[10px] font-black uppercase tracking-widest">
+                    {specialGuest ? "Guest Release" : "Bulk Order Release"}
+                  </span>
+                  <span className="font-mono text-xs font-bold text-violet-800">
+                    {specialOrder.orderNo}
+                  </span>
+                  {specialGuest && (
+                    <span className="px-2 py-0.5 rounded bg-white border border-violet-300 text-violet-700 text-[10px] font-black uppercase tracking-widest">
+                      {specialGuest.id}
+                    </span>
+                  )}
+                </div>
+                <h4 className="text-lg font-black text-slate-900 mt-1">
+                  {specialOrder.mealName}
+                </h4>
+                <p className="text-xs text-slate-500 font-medium">
+                  {specialOrder.requesterName} · {specialOrder.departmentName}
+                </p>
+                <p className="text-xs text-slate-500 mt-1 italic">
+                  "{specialOrder.purpose}"
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setSpecialOrder(null);
+                  setSpecialGuest(null);
+                  setSpecialMeal(null);
+                  setSpecialEligible(false);
+                  setMealUserId("");
+                }}
+                className="text-xs font-bold text-violet-600 hover:text-violet-800 px-3 py-1.5 rounded-lg hover:bg-violet-100 cursor-pointer"
+              >
+                Clear
+              </button>
+            </div>
+
+            {/* Eligibility summary */}
+            {specialMeal && (
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="p-3 bg-white rounded-xl border border-violet-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    Window
+                  </p>
+                  <p className="font-mono font-bold text-slate-900 mt-0.5">
+                    {hhmmToAmPm(specialMeal.eligibleFrom)} –{" "}
+                    {hhmmToAmPm(specialMeal.eligibleTo)}
+                  </p>
+                </div>
+                <div className="p-3 bg-white rounded-xl border border-violet-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    Unit Cost
+                  </p>
+                  <p className="font-mono font-bold text-slate-900 mt-0.5">
+                    LKR {specialMeal.cost}
+                  </p>
+                </div>
+                <div className="p-3 bg-white rounded-xl border border-violet-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    Total
+                  </p>
+                  <p className="font-mono font-bold text-slate-900 mt-0.5">
+                    {specialOrder.count}
+                  </p>
+                </div>
+                <div className="p-3 bg-white rounded-xl border border-violet-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    Remaining
+                  </p>
+                  <p className="font-mono font-bold text-emerald-700 mt-0.5">
+                    {specialRemaining}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Release form — only when eligible & remaining */}
+            {specialEligible && specialRemaining > 0 && (
+              <div className="space-y-3">
+                {!specialGuest && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                      Release Quantity
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={specialRemaining}
+                      value={releaseQty}
+                      onChange={(e) =>
+                        setReleaseQty(
+                          Math.max(
+                            1,
+                            Math.min(
+                              specialRemaining,
+                              Number(e.target.value) || 1,
+                            ),
+                          ),
+                        )
+                      }
+                      className="w-full px-3 py-2 bg-white border border-violet-200 rounded-xl text-sm font-mono font-bold outline-none focus:ring-2 focus:ring-violet-400"
+                    />
+                    <p className="text-[11px] text-slate-500">
+                      Max {specialRemaining} · each unit consumes one guest ID
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleReleaseBulk}
+                    disabled={releasingSpecial}
+                    className="flex-1 py-3 bg-violet-600 text-white rounded-xl font-black text-sm hover:bg-violet-700 disabled:opacity-60 transition-colors cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    {releasingSpecial && (
+                      <Loader2 size={16} className="animate-spin" />
+                    )}
+                    {specialGuest
+                      ? `Release 1 for Guest ${specialGuest.id}`
+                      : `Release ${releaseQty} Meal${releaseQty > 1 ? "s" : ""}`}
+                  </button>
+                  {!specialGuest && specialRemaining > 1 && (
+                    <button
+                      onClick={handleReleaseAll}
+                      disabled={releasingSpecial}
+                      className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-black text-sm hover:bg-slate-800 disabled:opacity-60 transition-colors cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      {releasingSpecial && (
+                        <Loader2 size={16} className="animate-spin" />
+                      )}
+                      Release All ({specialRemaining})
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
 
         {foundMealUser && (
           <motion.div
@@ -449,7 +976,8 @@ export const IssueMealsScreen: React.FC<IssueMealsScreenProps> = ({
                         {meal.name}
                       </h5>
                       <p className="text-xs text-slate-500 font-medium">
-                        {hhmmToAmPm(meal.eligibleFrom)} - {hhmmToAmPm(meal.eligibleTo)} Cost: LKR {meal.cost}
+                        {hhmmToAmPm(meal.eligibleFrom)} -{" "}
+                        {hhmmToAmPm(meal.eligibleTo)} Cost: LKR {meal.cost}
                       </p>
                     </div>
                   </div>
@@ -558,6 +1086,17 @@ export const IssueMealsScreen: React.FC<IssueMealsScreenProps> = ({
           </div>
         )}
       </div>
+
+      {/* QR scan modal */}
+      <AnimatePresence>
+        {qrOpen && (
+          <QrScanModal
+            open={qrOpen}
+            onClose={() => setQrOpen(false)}
+            onResult={handleQrResult}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };

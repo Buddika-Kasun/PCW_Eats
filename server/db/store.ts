@@ -54,7 +54,7 @@ export interface BiometricLog {
   timestamp: string;
   deviceId: string;
   deviceIp: string;
-  verificationMode: "fingerprint" | "facial" | "card" | "password";
+  verificationMode: "fingerprint" | "face" | "card" | "password";
   status: "verified" | "unrecognized";
 }
 

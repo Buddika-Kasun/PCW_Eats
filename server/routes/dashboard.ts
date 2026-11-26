@@ -50,7 +50,8 @@ function normaliseUser(u: any): NormalisedUser {
   };
 }
 
-async function fetchPcwUser(id: string): Promise<NormalisedUser | null> {
+export async function fetchPcwUser(id: string): Promise<NormalisedUser | null> {
+  // let newId = id;
   // 1. Direct lookup
   try {
     const directRes = await fetch(
@@ -585,6 +586,141 @@ router.get("/user/:userId", async (req: Request, res: Response) => {
     return res.status(502).json({
       success: false,
       message: "Could not build dashboard data",
+    });
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* GET /api/dashboard/canteen?canteenId=...&date=YYYY-MM-DD                   */
+/* -------------------------------------------------------------------------- */
+router.get("/canteen", async (req: Request, res: Response) => {
+  try {
+    const canteenId = String(req.query.canteenId ?? "").trim();
+    const date = String(req.query.date ?? todayISO()).trim(); // defaults to today
+
+    /* ------------------------------------------------------------------ */
+    /* 1. Today's meal issued count (from Transaction)                    */
+    /* ------------------------------------------------------------------ */
+    // A "meal issued" is a Transaction of type MEAL (or ISSUE) that is active.
+    // If canteenId is provided, scope to that canteen.
+    const mealWhere: any = {
+      active: true,
+      date,
+      type: { in: ["meal"] },
+    };
+    if (canteenId) mealWhere.canteenId = canteenId;
+
+    const [mealTx, specialOrders] = await Promise.all([
+      prisma.transaction.findMany({ where: mealWhere }),
+
+      // All active special orders for the date window.
+      // SpecialOrder has no date column, so we use createdAt range for the day.
+      // If you add an `orderDate` column later, swap this filter.
+      prisma.specialOrder.findMany({
+        where: {
+          active: true,
+          createdAt: {
+            gte: new Date(`${date}T00:00:00.000Z`),
+            lt: new Date(`${date}T23:59:59.999Z`),
+          },
+        },
+        include: { guests: { where: { active: true } } },
+      }),
+    ]);
+
+    /* ------------------------------------------------------------------ */
+    /* 2. Aggregate meal issued count                                     */
+    /* ------------------------------------------------------------------ */
+    // Count each meal transaction by qty (fallback to 1 per row).
+    const mealIssuedCount = mealTx.reduce(
+      (sum, t) => sum + Number(t.qty ?? 1),
+      0,
+    );
+    const mealTransactionRows = mealTx.length;
+    const mealCost = mealTx.reduce((sum, t) => sum + Number(t.cost ?? 0), 0);
+
+    /* ------------------------------------------------------------------ */
+    /* 3. Special order aggregates                                       */
+    /* ------------------------------------------------------------------ */
+    const totalSpecialOrders = specialOrders.length;
+
+    // "Issued" = at least one guest released, i.e. releasedCount > 0.
+    // (If you prefer partial semantics, this counts orders with any release.)
+    const issuedSpecialOrders = specialOrders.filter(
+      (o) => Number(o.releasedCount ?? 0) > 0,
+    ).length;
+
+    const pendingSpecialOrders = totalSpecialOrders - issuedSpecialOrders;
+
+    // Guest-level rollup (useful for the canteen to know headcount)
+    const totalGuests = specialOrders.reduce(
+      (sum, o) => sum + Number(o.count ?? 0),
+      0,
+    );
+    const releasedGuests = specialOrders.reduce(
+      (sum, o) => sum + Number(o.releasedCount ?? 0),
+      0,
+    );
+
+    // Per-order breakdown (handy for a table on the canteen screen)
+    const specialOrderBreakdown = specialOrders
+      .map((o) => ({
+        id: o.id,
+        orderNo: o.orderNo,
+        requesterName: o.requesterName,
+        departmentName: o.departmentName,
+        mealName: o.mealName,
+        count: o.count,
+        releasedCount: o.releasedCount,
+        remainingCount: Math.max(0, o.count - o.releasedCount),
+        status:
+          o.releasedCount >= o.count
+            ? "issued"
+            : o.releasedCount > 0
+              ? "partial"
+              : "pending",
+        guestRange:
+          o.guestRangeStart && o.guestRangeEnd
+            ? `${o.guestRangeStart}–${o.guestRangeEnd}`
+            : null,
+      }))
+      .sort((a, b) => a.orderNo.localeCompare(b.orderNo));
+
+    /* ------------------------------------------------------------------ */
+    /* 4. Response                                                        */
+    /* ------------------------------------------------------------------ */
+    return res.json({
+      success: true,
+      data: {
+        date,
+        canteenId: canteenId || null,
+
+        meals: {
+          issuedCount: mealIssuedCount,
+          transactionRows: mealTransactionRows,
+          totalCost: mealCost,
+        },
+
+        specialOrders: {
+          totalOrders: totalSpecialOrders,
+          total: totalGuests,
+          // issued: issuedSpecialOrders,
+          issued: releasedGuests,
+          // pending: pendingSpecialOrders,
+          pending: totalGuests - releasedGuests,
+          totalGuests,
+          releasedGuests,
+          breakdown: specialOrderBreakdown,
+        },
+
+        generatedAt: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    console.error("dashboard/canteen error:", err);
+    return res.status(502).json({
+      success: false,
+      message: "Could not build canteen dashboard data",
     });
   }
 });

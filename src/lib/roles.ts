@@ -23,13 +23,15 @@ export function defaultViewFor(user: AuthUser | null): View {
 
 /**
  * Can this user see the given view?
- * - Admins/sysadmin/hr: everything
+ * - Admins/sysadmin/hr: everything (including special-orders)
  * - Canteen: canteen-interface only
  * - Others: user-dashboard only
  */
 export function canAccessView(user: AuthUser | null, view: View): boolean {
   if (isAdminRole(user)) return true;
   if (isCanteenRole(user)) return view === "canteen-interface";
+  // Special Orders are admin-only — hide from employees
+  if (view === "special-orders") return false;
   return view === "user-dashboard";
 }
 
