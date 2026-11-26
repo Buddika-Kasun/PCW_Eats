@@ -15,7 +15,6 @@ import morgan from "morgan";
 import { createServer as createViteServer } from "vite";
 import { apiRouter } from "./server/routes";
 import { prisma } from "./server/db/prisma";
-import cookieParser from "cookie-parser";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -85,18 +84,6 @@ async function startServer() {
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
-  // MUST be before any middleware that reads req.cookies
-  app.use(cookieParser());
-
-  // Inject Authorization header from the sid cookie so PCW Eats APIs can
-  // authenticate using the SSO cookie set by /sso.
-  app.use("/api", (req, _res, next) => {
-    if (!req.headers.authorization && req.cookies?.sid) {
-      req.headers.authorization = `Bearer ${req.cookies.sid}`;
-    }
-    next();
-  });
-
   app.use((req, res, next) => {
     if (["POST", "PUT", "PATCH"].includes(req.method)) {
       const contentType = req.headers["content-type"] || "";
@@ -117,11 +104,19 @@ async function startServer() {
   app.use("/api", apiRouter);
 
   // -------------------------------------------------------------------------
-  // SSO entry point — /sso?token=<pcw-ride-access-token>
+  // Welcome / SSO entry — PCW Ride redirects here with ?token=...
+  // Validates token, then hands it to the SPA via URL so the SPA can
+  // save it in localStorage. No cookies involved.
   // -------------------------------------------------------------------------
-  app.get("/sso", async (req, res) => {
+  app.get("/welcome", async (req, res) => {
     const token = String(req.query.token || "");
-    if (!token) return res.redirect("/");
+
+    if (!token) {
+      console.log(
+        "No token in /welcome request — redirecting to SPA welcome screen",
+      );
+      return res.redirect("/?auth=missing");
+    }
 
     try {
       const r = await fetch(`${PCW_RIDE_API_URL}/auth/validate`, {
@@ -130,24 +125,18 @@ async function startServer() {
       });
 
       if (!r.ok) {
-        console.log("Auth error from PCW Ride:", await r.text());
-        return res.redirect("/login");
+        console.log("SSO validation failed:", await r.text());
+        return res.redirect("/?auth=failed");
       }
 
-      console.log("Auth success, setting cookie and redirecting to /");
+      console.log("SSO validation successful — handing token to SPA");
 
-      res.cookie("sid", token, {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: isProduction,
-        path: "/",
-        maxAge: 1000 * 60 * 60 * 24 * 7,
-      });
-
-      return res.redirect("/");
+      // SPA bootstrap reads ?token= from the URL, stores it in localStorage,
+      // then cleans the address bar with history.replaceState.
+      return res.redirect(`/?auth=ok&token=${encodeURIComponent(token)}`);
     } catch (err) {
-      console.error("SSO validation failed:", err);
-      return res.redirect("/login");
+      console.error("SSO validation error:", err);
+      return res.redirect("/?auth=failed");
     }
   });
 
