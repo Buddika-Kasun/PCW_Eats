@@ -155,7 +155,8 @@ class ZKTecoService extends EventEmitter {
       }),
       deviceId,
       deviceIp: this.config.ip,
-      verificationMode: verifyType,
+      // verificationMode: verifyType,
+      verificationMode: "face",
       status: user ? "verified" : "unrecognized",
     };
 

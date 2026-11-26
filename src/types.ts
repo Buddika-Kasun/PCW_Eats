@@ -109,12 +109,13 @@ export interface Transaction {
   canteenId: string;
 }
 
-export type View = 
-  | 'admin-dashboard' 
-  | 'item-management' 
-  | 'meal-management' 
-  | 'quota-management' 
-  | 'canteen-management' 
-  | 'reports'
-  | 'user-dashboard'
-  | 'canteen-interface';
+export type View =
+  | "admin-dashboard"
+  | "item-management"
+  | "meal-management"
+  | "quota-management"
+  | "canteen-management"
+  | "reports"
+  | "user-dashboard"
+  | "special-orders"
+  | "canteen-interface";

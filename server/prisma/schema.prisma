@@ -181,3 +181,53 @@ model BiometricLog {
 
   @@map("biometric_logs")
 }
+
+// ---------------------------------------------------------------------------
+// Special Orders
+// ---------------------------------------------------------------------------
+
+model SpecialOrder {
+  id            String  @id
+  orderNo       String  @unique @map("order_no")  // e.g. "O20261126001"
+  requesterId   String  @map("requester_id")      // PCW Ride user id
+  requesterName String  @map("requester_name")
+  departmentId  String  @map("department_id")
+  departmentName String @map("department_name")
+  mealId        String  @map("meal_id")
+  mealName      String  @map("meal_name")
+  count         Int
+  releasedCount   Int    @default(0) @map("released_count")
+  purpose       String  @db.Text
+  guestRangeStart String? @map("guest_range_start")  // e.g. "S1001"
+  guestRangeEnd   String? @map("guest_range_end")    // e.g. "S1003"
+
+  active    Boolean  @default(true)
+
+  createdBy String?  @map("created_by")
+  updatedBy String?  @map("updated_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+
+  guests    SpecialOrderGuest[]
+
+  @@map("special_orders")
+}
+
+model SpecialOrderGuest {
+  id        String  @id              // e.g. "S1001"
+  orderId   String  @map("order_id") // FK to SpecialOrder.id
+  active    Boolean @default(true)
+
+  createdBy String?  @map("created_by")
+  updatedBy String?  @map("updated_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+
+  order     SpecialOrder @relation(fields: [orderId], references: [id])
+
+  @@map("special_order_guests")
+}
+
+// Repurpose existing User model for future use — add optional audit fields
+// (keeps `id` as PK, but we will NOT enforce relations on Transaction.userId
+// since it comes from PCW Ride; this table is now free for other uses.)

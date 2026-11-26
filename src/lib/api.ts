@@ -283,6 +283,167 @@ export interface ReportInventoryRow {
   status: "Good" | "Low";
 }
 
+export interface SpecialOrder {
+  id: string;
+  orderNo: string;
+  requesterId: string;
+  requesterName: string;
+  departmentId: string;
+  departmentName: string;
+  mealId: string;
+  mealName: string;
+  count: number;
+  releasedCount: number;
+  purpose: string;
+  guestRangeStart?: string | null;
+  guestRangeEnd?: string | null;
+  guestIds?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CreateSpecialOrderPayload {
+  requesterId: string;
+  requesterName?: string;
+  departmentId: string;
+  departmentName?: string;
+  mealId: string;
+  count: number;
+  purpose: string;
+}
+
+export interface SpecialOrderLookupOrder {
+  id: string;
+  orderNo: string;
+  requesterId: string;
+  requesterName: string;
+  departmentId: string;
+  departmentName: string;
+  mealId: string;
+  mealName: string;
+  count: number;
+  releasedCount: number;
+  remaining: number;
+  purpose: string;
+  guestRangeStart?: string | null;
+  guestRangeEnd?: string | null;
+  guestIds: string[];
+}
+
+export interface SpecialOrderLookupMeal {
+  id: string;
+  code: string;
+  name: string;
+  cost: number;
+  eligibleFrom: string;
+  eligibleTo: string;
+}
+
+export interface SpecialOrderLookupGuest {
+  id: string;
+  orderId: string;
+  orderNo: string;
+}
+
+export interface SpecialOrderLookupResponse {
+  success: boolean;
+  data: {
+    type: "order" | "guest" | "none";
+    order?: SpecialOrderLookupOrder;
+    guest?: SpecialOrderLookupGuest;
+    meal?: SpecialOrderLookupMeal;
+    eligible?: boolean;
+    remaining?: number;
+    reason?: string;
+  };
+}
+
+export interface ReleaseOrderResponse {
+  success: boolean;
+  data: {
+    order: SpecialOrderLookupOrder;
+    releasedCount: number;
+    remaining: number;
+    releasedGuestIds: string[];
+    transactions: string[];
+  };
+  message: string;
+}
+
+// ---------------------------------------------------------------------------
+// Canteen Dashboard
+// ---------------------------------------------------------------------------
+
+export interface CanteenSpecialOrderBreakdown {
+  id: string;
+  orderNo: string;
+  requesterName: string;
+  departmentName: string;
+  mealName: string;
+  count: number;
+  releasedCount: number;
+  remainingCount: number;
+  status: "issued" | "partial" | "pending";
+  guestRange: string | null;
+}
+
+export interface CanteenDashboardResponse {
+  success: boolean;
+  message?: string;
+  data: {
+    date: string;
+    canteenId: string | null;
+
+    meals: {
+      issuedCount: number; // total meal qty issued today (normal meals)
+      transactionRows: number;
+      totalCost: number;
+    };
+
+    specialOrders: {
+      total: number; // all active special orders today
+      issued: number; // orders with releasedCount > 0
+      pending: number; // orders not yet issued
+      totalGuests: number;
+      releasedGuests: number;
+      breakdown: CanteenSpecialOrderBreakdown[];
+    };
+
+    generatedAt: string;
+  };
+}
+
+export interface HikvisionConfig {
+  ip: string;
+  port: number;
+  protocol: "http" | "https";
+  username: string;
+  password: string;
+  timeout: number;
+  deviceName: string;
+  enabled: boolean;
+  mode: "real-hardware" | "simulation";
+}
+
+export interface HikvisionStatus {
+  connected: boolean;
+  config: HikvisionConfig;
+  lastHeartbeat: string;
+  recentLogsCount: number;
+  deviceInfo: {
+    model: string;
+    firmware: string;
+    algorithms: string;
+    capacity: {
+      faces: number;
+      fingerprints: number;
+      cards: number;
+      logs: number;
+    };
+    isapiBase: string;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Transport
 // ---------------------------------------------------------------------------
@@ -334,6 +495,85 @@ function qs(params: Record<string, string | number | undefined>): string {
 // ---------------------------------------------------------------------------
 
 export const api = {
+  // Hikvision Biometric Device
+  hikvision: {
+    getStatus: () =>
+      fetchJson<{ success: boolean; data: HikvisionStatus }>(
+        "/hikvision/status",
+      ),
+
+    updateConfig: (config: Partial<HikvisionConfig>) =>
+      fetchJson<{
+        success: boolean;
+        data: HikvisionConfig;
+        message: string;
+      }>("/hikvision/config", {
+        method: "POST",
+        body: JSON.stringify(config),
+      }),
+
+    simulateScan: (employeeId?: string) =>
+      fetchJson<{
+        success: boolean;
+        data: {
+          success: boolean;
+          log: BiometricLog;
+          user: User | null;
+          message: string;
+        };
+      }>("/hikvision/simulate-scan", {
+        method: "POST",
+        body: JSON.stringify({ employeeId }),
+        allowSoftFail: true,
+      }),
+
+    punch: (data: {
+      userIdOrCard: string;
+      verifyType?: "face" | "fingerprint" | "card" | "password";
+      deviceId?: string;
+    }) =>
+      fetchJson<{
+        success: boolean;
+        verified: boolean;
+        employee?: User;
+        log: BiometricLog;
+        message: string;
+      }>("/hikvision/punch", {
+        method: "POST",
+        body: JSON.stringify(data),
+        allowSoftFail: true,
+      }),
+
+    getLogs: (limit?: number) =>
+      fetchJson<{
+        success: boolean;
+        data: BiometricLog[];
+        total: number;
+      }>(`/hikvision/logs${qs({ limit })}`),
+
+    subscribeEvents: (
+      onScan: (event: {
+        type: "biometric_scan";
+        log: BiometricLog;
+        user: User | null;
+        timestamp: string;
+      }) => void,
+    ) => {
+      const eventSource = new EventSource(`${BASE_URL}/hikvision/sse`);
+      eventSource.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === "biometric_scan") onScan(payload);
+        } catch (e) {
+          console.error("Failed to parse SSE event:", e);
+        }
+      };
+      eventSource.onerror = (err) => {
+        console.warn("SSE connection interrupted:", err);
+      };
+      return () => eventSource.close();
+    },
+  },
   // Admin Dashboard
   adminDashboard: {
     get: (month: string = "current") =>
@@ -346,6 +586,13 @@ export const api = {
     getUser: (userId: string) =>
       fetchJson<UserDashboardResponse>(
         `/dashboard/user/${encodeURIComponent(userId)}`,
+      ),
+  },
+  // Canteen Dashboard
+  canteenDashboard: {
+    get: (params?: { canteenId?: string; date?: string }) =>
+      fetchJson<CanteenDashboardResponse>(
+        `/dashboard/canteen${qs(params ?? {})}`,
       ),
   },
   // Reports
@@ -702,6 +949,85 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+  },
+
+  // Special Orders
+  specialOrders: {
+    create: (data: CreateSpecialOrderPayload) =>
+      fetchJson<{
+        success: boolean;
+        data: SpecialOrder & {
+          guestRange: {
+            start: string | null;
+            end: string | null;
+            ids: string[];
+          };
+        };
+        message: string;
+      }>("/special-orders", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    list: (params?: { userId?: string; deptId?: string; month?: string }) =>
+      fetchJson<{
+        success: boolean;
+        data: SpecialOrder[];
+        total: number;
+      }>(`/special-orders${qs(params ?? {})}`),
+
+    getById: (id: string) =>
+      fetchJson<{ success: boolean; data: SpecialOrder }>(
+        `/special-orders/${encodeURIComponent(id)}`,
+      ),
+
+    update: (
+      id: string,
+      patch: {
+        purpose?: string;
+        mealId?: string;
+        count?: number;
+        updatedBy?: string;
+      },
+    ) =>
+      fetchJson<{
+        success: boolean;
+        data: SpecialOrder & {
+          guestRange: {
+            start: string | null;
+            end: string | null;
+            ids: string[];
+          };
+        };
+        message: string;
+      }>(`/special-orders/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      }),
+
+    remove: (id: string, updatedBy?: string) =>
+      fetchJson<{ success: boolean; message: string }>(
+        `/special-orders/${encodeURIComponent(id)}${qs({ updatedBy })}`,
+        { method: "DELETE" },
+      ),
+
+    lookup: (code: string) =>
+      fetchJson<SpecialOrderLookupResponse>(
+        `/special-orders/lookup/${encodeURIComponent(code)}`,
+      ),
+
+    release: (
+      id: string,
+      data: {
+        count: number;
+        canteenId?: string;
+        releasedBy?: string;
+      },
+    ) =>
+      fetchJson<ReleaseOrderResponse>(
+        `/special-orders/${encodeURIComponent(id)}/release`,
+        { method: "POST", body: JSON.stringify(data) },
+      ),
   },
 
   // ZKTeco

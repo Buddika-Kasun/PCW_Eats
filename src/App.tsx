@@ -13,13 +13,14 @@ import CanteenManagement from "./components/CanteenManagement";
 import Reports from "./components/Reports";
 import UserDashboard from "./components/UserDashboard";
 import CanteenInterface from "./components/CanteenInterface";
+import SpecialOrdersScreen from "./components/SpecialOrdersScreen";
 import { View } from "./types";
 import { motion, AnimatePresence } from "motion/react";
 import { Menu, X, Utensils, LogOut } from "lucide-react";
 import { AuthUser, getCachedUser } from "./lib/auth";
 import { Welcome } from "./components/Welcome";
 import { Login } from "./components/Login";
-import { canAccessView, defaultViewFor, shouldShowSidebar } from "./lib/roles";
+import { canAccessView, defaultViewFor, isAdminRole, shouldShowSidebar } from "./lib/roles";
 
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(getCachedUser());
@@ -27,6 +28,9 @@ export default function App() {
     defaultViewFor(getCachedUser()),
   );
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Special Orders — when true, the screen opens with the create modal pre-opened
+  const [autoCreate, setAutoCreate] = useState(false);
 
   // When the user changes (login), align the view to their role.
   useEffect(() => {
@@ -52,7 +56,6 @@ export default function App() {
   };
 
   const renderView = () => {
-    // Ensure currentView is actually allowed; otherwise fall back.
     const view = canAccessView(user, currentView)
       ? currentView
       : defaultViewFor(user);
@@ -71,7 +74,33 @@ export default function App() {
       case "reports":
         return <Reports />;
       case "user-dashboard":
-        return <UserDashboard />;
+        return (
+          <UserDashboard
+            onOpenSpecialOrders={(mode) => {
+              // Guard: only admins should ever trigger this
+              if (!canAccessView(user, "special-orders")) return;
+              setAutoCreate(mode === "create");
+              setCurrentView("special-orders");
+              setIsMobileMenuOpen(false);
+            }}
+          />
+        );
+      case "special-orders":
+        return (
+          <SpecialOrdersScreen
+            autoCreate={autoCreate}
+            onBack={() => {
+              setAutoCreate(false);
+              // Return to the dashboard the user came from
+              const back: View = 
+              // isAdminRole(user)
+              //   ? defaultViewFor(user) : 
+                "user-dashboard";
+              setCurrentView(back);
+              setIsMobileMenuOpen(false);
+            }}
+          />
+        );
       case "canteen-interface":
         return (
           <CanteenInterface
@@ -117,7 +146,6 @@ export default function App() {
             title="Sign out"
           >
             <LogOut size={16} />
-            {/* Sign Out */}
           </button>
         </header>
         <div className="p-4 md:p-8 max-w-7xl mx-auto">{renderView()}</div>
