@@ -15,6 +15,7 @@ export interface User {
   role: string;
   fingerprintEnrolled?: boolean;
   biometricCardNo?: string;
+  active?: boolean;
 }
 
 export interface InventoryRecord {
@@ -25,6 +26,7 @@ export interface InventoryRecord {
   stock: number;
   minLevel: number;
   status: "Good" | "Low";
+  active?: boolean;
 }
 
 export interface TransactionRecord {
@@ -32,6 +34,7 @@ export interface TransactionRecord {
   date: string;
   time?: string;
   dept: string;
+  departmentId?: string | null;
   item: string;
   qty: number;
   cost: number;
@@ -40,6 +43,7 @@ export interface TransactionRecord {
   userId?: string;
   userName?: string;
   canteenId?: string;
+  active?: boolean;
 }
 
 export interface BiometricLog {
@@ -56,7 +60,7 @@ export interface BiometricLog {
 
 // ---------- Items ----------
 export async function getItems(): Promise<Item[]> {
-  const rows = await prisma.item.findMany();
+  const rows = await prisma.item.findMany({ where: { active: true } });
   return rows.map((r) => ({
     id: r.id,
     code: r.code,
@@ -78,6 +82,8 @@ export async function createItem(item: Item): Promise<Item> {
       price: item.price,
       category: item.category ?? "stock-keeping",
       shelfLife: item.shelfLife ?? "perpetual",
+      createdBy: item.createdBy ?? null,
+      updatedBy: item.updatedBy ?? null,
     },
   });
   return {
@@ -88,6 +94,8 @@ export async function createItem(item: Item): Promise<Item> {
     price: r.price,
     category: (r.category ?? "stock-keeping") as Item["category"],
     shelfLife: (r.shelfLife ?? "perpetual") as Item["shelfLife"],
+    createdBy: item.createdBy ?? null,
+    updatedBy: item.updatedBy ?? null,
   };
 }
 
@@ -97,7 +105,7 @@ export async function updateItem(
 ): Promise<Item | null> {
   try {
     const r = await prisma.item.update({
-      where: { id },
+      where: { id, active: true }, // ← cannot update inactive
       data: {
         code: patch.code,
         name: patch.name,
@@ -105,6 +113,7 @@ export async function updateItem(
         price: patch.price,
         category: patch.category,
         shelfLife: patch.shelfLife,
+        updatedBy: patch.updatedBy ?? undefined,
       },
     });
     return {
@@ -115,15 +124,17 @@ export async function updateItem(
       price: r.price,
       category: (r.category ?? "stock-keeping") as Item["category"],
       shelfLife: (r.shelfLife ?? "perpetual") as Item["shelfLife"],
+      updatedBy: r.updatedBy ?? undefined,
     };
   } catch {
     return null;
   }
 }
 
+/** Soft delete — sets active = false. */
 export async function deleteItem(id: string): Promise<boolean> {
   try {
-    await prisma.item.delete({ where: { id } });
+    await prisma.item.update({ where: { id }, data: { active: false } });
     return true;
   } catch {
     return false;
@@ -132,7 +143,7 @@ export async function deleteItem(id: string): Promise<boolean> {
 
 // ---------- Meals ----------
 export async function getMeals(): Promise<Meal[]> {
-  const rows = await prisma.meal.findMany();
+  const rows = await prisma.meal.findMany({ where: { active: true } });
   return rows.map((r) => ({
     id: r.id,
     code: r.code,
@@ -140,6 +151,8 @@ export async function getMeals(): Promise<Meal[]> {
     cost: r.cost,
     eligibleFrom: r.eligibleFrom,
     eligibleTo: r.eligibleTo,
+    createdBy: r.createdBy ?? undefined,
+    updatedBy: r.updatedBy ?? undefined,
   }));
 }
 
@@ -152,6 +165,8 @@ export async function createMeal(meal: Meal): Promise<Meal> {
     cost: r.cost,
     eligibleFrom: r.eligibleFrom,
     eligibleTo: r.eligibleTo,
+    createdBy: r.createdBy ?? undefined,
+    updatedBy: r.updatedBy ?? undefined,
   };
 }
 
@@ -161,13 +176,14 @@ export async function updateMeal(
 ): Promise<Meal | null> {
   try {
     const r = await prisma.meal.update({
-      where: { id },
+      where: { id, active: true },
       data: {
         code: patch.code,
         name: patch.name,
         cost: patch.cost,
         eligibleFrom: patch.eligibleFrom,
         eligibleTo: patch.eligibleTo,
+        updatedBy: patch.updatedBy ?? undefined,
       },
     });
     return {
@@ -177,15 +193,18 @@ export async function updateMeal(
       cost: r.cost,
       eligibleFrom: r.eligibleFrom,
       eligibleTo: r.eligibleTo,
+      createdBy: r.createdBy ?? undefined,
+      updatedBy: r.updatedBy ?? undefined,
     };
   } catch {
     return null;
   }
 }
 
+/** Soft delete — sets active = false. */
 export async function deleteMeal(id: string): Promise<boolean> {
   try {
-    await prisma.meal.delete({ where: { id } });
+    await prisma.meal.update({ where: { id }, data: { active: false } });
     return true;
   } catch {
     return false;
@@ -194,19 +213,35 @@ export async function deleteMeal(id: string): Promise<boolean> {
 
 // ---------- Quotas ----------
 export async function getQuotas(): Promise<Quota[]> {
-  const rows = await prisma.quota.findMany();
+  const rows = await prisma.quota.findMany({ where: { active: true } });
   return rows.map((r) => ({
     id: r.id,
     code: r.code,
     items: JSON.parse(r.itemsJson),
+    createdBy: r.createdBy ?? null,
+    updatedBy: r.updatedBy ?? null,
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
   }));
 }
 
 export async function createQuota(q: Quota): Promise<Quota> {
   const r = await prisma.quota.create({
-    data: { id: q.id, code: q.code, itemsJson: JSON.stringify(q.items) },
+    data: {
+      id: q.id,
+      code: q.code,
+      itemsJson: JSON.stringify(q.items),
+      createdBy: q.createdBy ?? null,
+      updatedBy: q.updatedBy ?? null,
+    },
   });
-  return { id: r.id, code: r.code, items: JSON.parse(r.itemsJson) };
+  return {
+    id: r.id,
+    code: r.code,
+    items: JSON.parse(r.itemsJson),
+    createdBy: r.createdBy ?? null,
+    updatedBy: r.updatedBy ?? null,
+  };
 }
 
 export async function updateQuota(
@@ -215,21 +250,29 @@ export async function updateQuota(
 ): Promise<Quota | null> {
   try {
     const r = await prisma.quota.update({
-      where: { id },
+      where: { id, active: true },
       data: {
         code: patch.code,
         itemsJson: patch.items ? JSON.stringify(patch.items) : undefined,
+        updatedBy: patch.updatedBy ?? undefined,
       },
     });
-    return { id: r.id, code: r.code, items: JSON.parse(r.itemsJson) };
+    return {
+      id: r.id,
+      code: r.code,
+      items: JSON.parse(r.itemsJson),
+      createdBy: r.createdBy ?? null,
+      updatedBy: r.updatedBy ?? null,
+    };
   } catch {
     return null;
   }
 }
 
+/** Soft delete — sets active = false. */
 export async function deleteQuota(id: string): Promise<boolean> {
   try {
-    await prisma.quota.delete({ where: { id } });
+    await prisma.quota.update({ where: { id }, data: { active: false } });
     return true;
   } catch {
     return false;
@@ -238,12 +281,16 @@ export async function deleteQuota(id: string): Promise<boolean> {
 
 // ---------- Department Quota Maps ----------
 export async function getDeptQuotaMaps(): Promise<DepartmentQuotaMap[]> {
-  const rows = await prisma.departmentQuotaMap.findMany();
+  const rows = await prisma.departmentQuotaMap.findMany({
+    where: { active: true },
+  });
   return rows.map((r) => ({
     id: r.id,
     department: r.department,
     effectiveFrom: r.effectiveFrom,
     quotaId: r.quotaId,
+    createdBy: r.createdBy ?? null,
+    updatedBy: r.updatedBy ?? null,
   }));
 }
 
@@ -256,33 +303,125 @@ export async function createDeptQuotaMap(
     department: r.department,
     effectiveFrom: r.effectiveFrom,
     quotaId: r.quotaId,
+    createdBy: r.createdBy ?? null,
+    updatedBy: r.updatedBy ?? null,
   };
+}
+
+export async function updateDeptQuotaMap(
+  id: string,
+  patch: Partial<DepartmentQuotaMap>,
+): Promise<DepartmentQuotaMap | null> {
+  try {
+    const r = await prisma.departmentQuotaMap.update({
+      where: { id, active: true },
+      data: {
+        department: patch.department,
+        effectiveFrom: patch.effectiveFrom,
+        quotaId: patch.quotaId,
+        updatedBy: patch.updatedBy ?? undefined,
+      },
+    });
+    return {
+      id: r.id,
+      department: r.department,
+      effectiveFrom: r.effectiveFrom,
+      quotaId: r.quotaId,
+      createdBy: r.createdBy ?? null,
+      updatedBy: r.updatedBy ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Soft delete — sets active = false. */
+export async function deleteDeptQuotaMap(id: string): Promise<boolean> {
+  try {
+    await prisma.departmentQuotaMap.update({
+      where: { id },
+      data: { active: false },
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------- Canteens ----------
 export async function getCanteens(): Promise<Canteen[]> {
-  const rows = await prisma.canteen.findMany();
+  const rows = await prisma.canteen.findMany({ where: { active: true } });
   return rows.map((r) => ({
     id: r.id,
     code: r.code,
     name: r.name,
     type: r.type as Canteen["type"],
+    createdBy: r.createdBy ?? undefined,
+    updatedBy: r.updatedBy ?? undefined,
   }));
 }
 
 export async function createCanteen(canteen: Canteen): Promise<Canteen> {
-  const r = await prisma.canteen.create({ data: canteen });
+  const r = await prisma.canteen.create({
+    data: {
+      id: canteen.id,
+      code: canteen.code,
+      name: canteen.name,
+      type: canteen.type,
+      createdBy: canteen.createdBy ?? null,
+      updatedBy: canteen.updatedBy ?? null,
+    },
+  });
   return {
     id: r.id,
     code: r.code,
     name: r.name,
     type: r.type as Canteen["type"],
+    createdBy: r.createdBy ?? null,
+    updatedBy: r.updatedBy ?? null,
   };
+}
+
+export async function updateCanteen(
+  id: string,
+  patch: Partial<Canteen>,
+): Promise<Canteen | null> {
+  try {
+    const r = await prisma.canteen.update({
+      where: { id, active: true },
+      data: {
+        code: patch.code,
+        name: patch.name,
+        type: patch.type,
+        updatedBy: patch.updatedBy ?? undefined,
+      },
+    });
+    return {
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      type: r.type as Canteen["type"],
+      createdBy: r.createdBy ?? undefined,
+      updatedBy: r.updatedBy ?? undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Soft delete — sets active = false. */
+export async function deleteCanteen(id: string): Promise<boolean> {
+  try {
+    await prisma.canteen.update({ where: { id }, data: { active: false } });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------- Inventory ----------
 export async function getInventory(): Promise<InventoryRecord[]> {
-  const rows = await prisma.inventory.findMany();
+  const rows = await prisma.inventory.findMany({ where: { active: true } });
   return rows.map((r) => ({
     id: r.id,
     itemId: r.itemId,
@@ -300,7 +439,7 @@ export async function updateInventory(
 ): Promise<InventoryRecord | null> {
   try {
     const r = await prisma.inventory.update({
-      where: { id },
+      where: { id, active: true },
       data: {
         item: patch.item,
         uom: patch.uom,
@@ -348,9 +487,19 @@ export async function createInventoryRecord(
   };
 }
 
+/** Soft delete — sets active = false. */
+export async function deleteInventoryRecord(id: string): Promise<boolean> {
+  try {
+    await prisma.inventory.update({ where: { id }, data: { active: false } });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------- Daily batches ----------
 export async function getDailyBatches(): Promise<DailyReadyMadeBatch[]> {
-  const rows = await prisma.dailyBatch.findMany();
+  const rows = await prisma.dailyBatch.findMany({ where: { active: true } });
   return rows.map((r) => ({
     id: r.id,
     itemId: r.itemId,
@@ -373,7 +522,7 @@ export async function updateDailyBatch(
 ): Promise<DailyReadyMadeBatch | null> {
   try {
     const r = await prisma.dailyBatch.update({
-      where: { id },
+      where: { id, active: true },
       data: {
         issuedQty: patch.issuedQty,
         remainingQty: patch.remainingQty,
@@ -436,9 +585,19 @@ export async function createDailyBatch(
   };
 }
 
+/** Soft delete — sets active = false. */
+export async function deleteDailyBatch(id: string): Promise<boolean> {
+  try {
+    await prisma.dailyBatch.update({ where: { id }, data: { active: false } });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------- Users ----------
 export async function getUsers(): Promise<User[]> {
-  const rows = await prisma.user.findMany();
+  const rows = await prisma.user.findMany({ where: { active: true } });
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -446,9 +605,14 @@ export async function getUsers(): Promise<User[]> {
     role: r.role,
     fingerprintEnrolled: r.fingerprintEnrolled ?? undefined,
     biometricCardNo: r.biometricCardNo ?? undefined,
+    active: r.active,
   }));
 }
 
+/**
+ * Lookup by ID — returns the row even if inactive, so callers can show
+ * "this user is disabled" instead of "not found". Filter at call sites.
+ */
 export async function getUserById(id: string): Promise<User | null> {
   const r = await prisma.user.findUnique({ where: { id } });
   if (!r) return null;
@@ -459,14 +623,16 @@ export async function getUserById(id: string): Promise<User | null> {
     role: r.role,
     fingerprintEnrolled: r.fingerprintEnrolled ?? undefined,
     biometricCardNo: r.biometricCardNo ?? undefined,
+    active: r.active,
   };
 }
 
+/** Only active users by biometric card. */
 export async function getUserByBiometricCard(
   cardNo: string,
 ): Promise<User | null> {
   const r = await prisma.user.findFirst({
-    where: { biometricCardNo: cardNo },
+    where: { biometricCardNo: cardNo, active: true },
   });
   if (!r) return null;
   return {
@@ -476,17 +642,29 @@ export async function getUserByBiometricCard(
     role: r.role,
     fingerprintEnrolled: r.fingerprintEnrolled ?? undefined,
     biometricCardNo: r.biometricCardNo ?? undefined,
+    active: r.active,
   };
+}
+
+/** Soft delete — sets active = false. */
+export async function deleteUser(id: string): Promise<boolean> {
+  try {
+    await prisma.user.update({ where: { id }, data: { active: false } });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------- Transactions ----------
 export async function getTransactions(): Promise<TransactionRecord[]> {
-  const rows = await prisma.transaction.findMany();
+  const rows = await prisma.transaction.findMany({ where: { active: true } });
   return rows.map((r) => ({
     id: r.id,
     date: r.date,
     time: r.time ?? undefined,
     dept: r.dept,
+    departmentId: r.departmentId ?? undefined,
     item: r.item,
     qty: r.qty,
     cost: r.cost,
@@ -495,6 +673,7 @@ export async function getTransactions(): Promise<TransactionRecord[]> {
     userId: r.userId ?? undefined,
     userName: r.userName ?? undefined,
     canteenId: r.canteenId ?? undefined,
+    active: r.active,
   }));
 }
 
@@ -507,6 +686,7 @@ export async function createTransaction(
       date: tx.date,
       time: tx.time ?? null,
       dept: tx.dept,
+      departmentId: tx.departmentId ?? null,
       item: tx.item,
       qty: tx.qty,
       cost: tx.cost,
@@ -522,6 +702,7 @@ export async function createTransaction(
     date: r.date,
     time: r.time ?? undefined,
     dept: r.dept,
+    departmentId: r.departmentId ?? undefined,
     item: r.item,
     qty: r.qty,
     cost: r.cost,
@@ -530,7 +711,18 @@ export async function createTransaction(
     userId: r.userId ?? undefined,
     userName: r.userName ?? undefined,
     canteenId: r.canteenId ?? undefined,
+    active: r.active,
   };
+}
+
+/** Soft delete — sets active = false. */
+export async function deactivateTransaction(id: string): Promise<boolean> {
+  try {
+    await prisma.transaction.update({ where: { id }, data: { active: false } });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------- Department balances ----------
@@ -554,7 +746,7 @@ export async function setDeptBalance(
   });
 }
 
-// ---------- Biometric logs ----------
+// ---------- Biometric logs (audit — not soft-deleted) ----------
 export async function getBiometricLogs(limit = 100): Promise<BiometricLog[]> {
   const rows = await prisma.biometricLog.findMany({
     orderBy: { timestamp: "desc" },

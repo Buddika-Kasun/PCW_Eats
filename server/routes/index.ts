@@ -25,8 +25,11 @@ import canteensRouter from "./canteens";
 import inventoryRouter from "./inventory";
 import transactionsRouter from "./transactions";
 import zktecoRouter from "./zkteco";
-import reportsRouter from "./reports";
 import { authRouter } from './auth';
+import { usersRouter } from './users';
+import { departmentsRouter } from './departments';
+import { dashboardRouter } from './dashboard';
+import { reportsRouter } from './reports';
 
 export const apiRouter = Router();
 
@@ -43,6 +46,7 @@ apiRouter.get('/health', (req, res) => {
 
 // Mount domain routes
 apiRouter.use("/auth", authRouter);
+apiRouter.use("/users", usersRouter);
 apiRouter.use('/items', itemsRouter);
 apiRouter.use('/batches', batchesRouter);
 apiRouter.use('/meals', mealsRouter);
@@ -52,3 +56,5 @@ apiRouter.use('/inventory', inventoryRouter);
 apiRouter.use('/transactions', transactionsRouter);
 apiRouter.use('/zkteco', zktecoRouter);
 apiRouter.use('/reports', reportsRouter);
+apiRouter.use("/departments", departmentsRouter);
+apiRouter.use("/dashboard", dashboardRouter);

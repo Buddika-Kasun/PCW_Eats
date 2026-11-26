@@ -33,16 +33,20 @@ export function clearUser() {
 }
 
 export async function fetchMe(): Promise<AuthUser | null> {
-    const token = getToken();
-    if (!token) return null;
+  const token = getToken();
+  if (!token) {
+    clearUser();
+    return null;
+  }
 
   try {
     const res = await fetch("/api/auth/me", {
-      headers: { Authorization: `Bearer ${token}` },
-      credentials: "omit",
+      // headers: { Authorization: `Bearer ${token}` },
+      // credentials: "omit",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      credentials: "include",
     });
 
-    // const res = await fetch("/api/auth/me", { credentials: "include" });
     if (res.status === 401 || !res.ok) {
       clearUser();
       return null;
@@ -55,7 +59,7 @@ export async function fetchMe(): Promise<AuthUser | null> {
     }
 
     // Handle both shapes:
-    //   data: { user: {...}, valid: true }   ← your real response
+    //   data: { user: {...}, valid: true }   ← real response
     //   data: { id, email, ... }             ← flat
     const payload = json.data;
     const user: AuthUser | null =
@@ -76,11 +80,60 @@ export async function fetchMe(): Promise<AuthUser | null> {
   }
 }
 
-export async function logout() {
+export async function login(
+  username: string,
+  password: string,
+): Promise<AuthUser | null> {
   try {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (!res.ok) return null;
+
+    const json = await res.json();
+    if (!json?.success || !json.data) return null;
+
+    const payload = json.data;
+    const user: AuthUser | null =
+      payload.user && typeof payload.user === "object"
+        ? (payload.user as AuthUser)
+        : (payload as AuthUser);
+
+    if (!user) return null;
+
+    // Persist token if the server returned one
+    if (typeof payload.token === "string" && payload.token) {
+      const { setToken } = await import("./authToken");
+      setToken(payload.token);
+    }
+
+    localStorage.setItem(KEY, JSON.stringify(user));
+    return user;
+  } catch {
+    return null;
+  }
+}
+
+export async function logout() {
+  const token = getToken();
+  try {
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "include",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
   } finally {
     clearUser();
-    window.location.replace("/");
+    try {
+      const { clearToken } = await import("./authToken");
+      clearToken();
+    } catch {
+      // authToken may not export clearToken — ignore
+    }
+    window.location.replace("/login");
   }
 }

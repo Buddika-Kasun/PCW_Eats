@@ -3,34 +3,61 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import Sidebar from './components/Sidebar';
-import AdminDashboard from './components/AdminDashboard';
-import ItemManagement from './components/ItemManagement';
-import MealManagement from './components/MealManagement';
-import QuotaManagement from './components/QuotaManagement';
-import CanteenManagement from './components/CanteenManagement';
-import Reports from './components/Reports';
-import UserDashboard from './components/UserDashboard';
-import CanteenInterface from './components/CanteenInterface';
-import { View } from './types';
-import { motion, AnimatePresence } from 'motion/react';
-import { Menu, X, Utensils } from 'lucide-react';
-import { AuthUser, getCachedUser } from './lib/auth';
-import { Welcome } from './components/Welcome';
+import React, { useEffect, useState } from "react";
+import Sidebar from "./components/Sidebar";
+import AdminDashboard from "./components/AdminDashboard";
+import ItemManagement from "./components/ItemManagement";
+import MealManagement from "./components/MealManagement";
+import QuotaManagement from "./components/QuotaManagement";
+import CanteenManagement from "./components/CanteenManagement";
+import Reports from "./components/Reports";
+import UserDashboard from "./components/UserDashboard";
+import CanteenInterface from "./components/CanteenInterface";
+import { View } from "./types";
+import { motion, AnimatePresence } from "motion/react";
+import { Menu, X, Utensils, LogOut } from "lucide-react";
+import { AuthUser, getCachedUser } from "./lib/auth";
+import { Welcome } from "./components/Welcome";
+import { Login } from "./components/Login";
+import { canAccessView, defaultViewFor, shouldShowSidebar } from "./lib/roles";
 
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(getCachedUser());
-  const [currentView, setCurrentView] = useState<View>("admin-dashboard");
+  const [currentView, setCurrentView] = useState<View>(() =>
+    defaultViewFor(getCachedUser()),
+  );
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // Gate: until we have a user, show the Welcome (validate / not-authorized) screen.
+  // When the user changes (login), align the view to their role.
+  useEffect(() => {
+    if (user) setCurrentView(defaultViewFor(user));
+  }, [user]);
+
+  // Auth gate
   if (!user) {
+    if (window.location.pathname.startsWith("/login")) {
+      return <Login onAuthed={setUser} />;
+    }
     return <Welcome onAuthed={setUser} />;
   }
 
+  const handleViewChange = (view: View) => {
+    // Block navigation to unauthorized views
+    if (!canAccessView(user, view)) {
+      setCurrentView(defaultViewFor(user));
+    } else {
+      setCurrentView(view);
+    }
+    setIsMobileMenuOpen(false);
+  };
+
   const renderView = () => {
-    switch (currentView) {
+    // Ensure currentView is actually allowed; otherwise fall back.
+    const view = canAccessView(user, currentView)
+      ? currentView
+      : defaultViewFor(user);
+
+    switch (view) {
       case "admin-dashboard":
         return <AdminDashboard />;
       case "item-management":
@@ -46,36 +73,65 @@ export default function App() {
       case "user-dashboard":
         return <UserDashboard />;
       case "canteen-interface":
-        return <CanteenInterface />;
+        return (
+          <CanteenInterface
+            onBackToDashboard={() => handleViewChange(defaultViewFor(user))}
+          />
+        );
       default:
         return <AdminDashboard />;
     }
   };
 
-  const handleViewChange = (view: View) => {
-    setCurrentView(view);
-    setIsMobileMenuOpen(false);
-  };
-
-  // Canteen interface is full screen, others have sidebar
-  if (currentView === "canteen-interface") {
+  // Full-screen views (no sidebar shell)
+  if (
+    currentView === "canteen-interface" &&
+    canAccessView(user, "canteen-interface")
+  ) {
     return (
       <div className="min-h-dvh bg-slate-50 font-sans selection:bg-amber-200 selection:text-amber-900">
-        <CanteenInterface
-          onBackToDashboard={() => handleViewChange("admin-dashboard")}
-        />
+        {renderView()}
       </div>
     );
   }
 
+  // Non-admin users: single-view app, no sidebar, no hamburger.
+  if (!shouldShowSidebar(user)) {
+    return (
+      <div className="min-h-dvh bg-slate-50 font-sans selection:bg-amber-200 selection:text-amber-900">
+        {/* Minimal top bar so the user still sees who they are + sign out */}
+        <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-30">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-amber-400 rounded-lg flex items-center justify-center">
+              <Utensils className="text-slate-900" size={18} />
+            </div>
+            <h1 className="font-bold text-lg tracking-tight text-slate-900">
+              PCW Eats
+            </h1>
+          </div>
+          <button
+            onClick={() => {
+              import("./lib/auth").then((m) => m.logout());
+            }}
+            className="px-2 py-2 bg-rose-600 text-white rounded-lg font-bold text-xs md:text-sm hover:bg-rose-700 transition-colors flex items-center gap-2 cursor-pointer"
+            title="Sign out"
+          >
+            <LogOut size={16} />
+            {/* Sign Out */}
+          </button>
+        </header>
+        <div className="p-4 md:p-8 max-w-7xl mx-auto">{renderView()}</div>
+      </div>
+    );
+  }
+
+  // Admin / sysadmin / hr: full shell with sidebar
   return (
     <div className="flex min-h-dvh bg-slate-50 font-sans selection:bg-amber-200 selection:text-amber-900">
-      {/* Desktop Sidebar */}
       <div className="hidden lg:block">
         <Sidebar currentView={currentView} onViewChange={handleViewChange} />
       </div>
 
-      {/* Mobile Sidebar Overlay */}
       <AnimatePresence>
         {isMobileMenuOpen && (
           <>
@@ -109,7 +165,6 @@ export default function App() {
       </AnimatePresence>
 
       <main className="flex-1 h-dvh overflow-y-auto">
-        {/* Mobile Header */}
         <header className="lg:hidden bg-white border-b border-slate-200 p-4 flex items-center justify-between sticky top-0 z-30">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-amber-400 rounded-lg flex items-center justify-center">
