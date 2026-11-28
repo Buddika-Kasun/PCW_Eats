@@ -18,6 +18,7 @@ import { PCW_RIDE_API_URL } from "../config";
 import { prisma } from "../db/prisma";
 
 const router = Router();
+const TIME_ZONE = "Asia/Colombo";
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                     */
@@ -87,20 +88,49 @@ export async function fetchPcwUser(id: string): Promise<NormalisedUser | null> {
   return exact ? normaliseUser(exact) : null;
 }
 
+/** "12:00", "9:5", " 12:00 ", "12:00:00" → "12:00" (Colombo wall clock). */
+export function normalizeHHmm(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  const s = String(raw).trim();
+  const m = /^(\d{1,2}):(\d{1,2})(?::\d{1,2})?$/.exec(s);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
 function timeToMinutes(hhmm: string): number {
-  const [h, m] = (hhmm || "").split(":").map(Number);
+  const n = normalizeHHmm(hhmm) ?? "00:00";
+  const [h, m] = n.split(":").map(Number);
   return (h || 0) * 60 + (m || 0);
 }
 
-function nowHHMM(): string {
-  const d = new Date();
-  return `${String(d.getHours()).padStart(2, "0")}:${String(
-    d.getMinutes(),
-  ).padStart(2, "0")}`;
+/** Current Colombo wall-clock time as HH:mm. */
+export function nowHHMM(): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const g = (t: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === t)?.value ?? "00";
+  const hh = g("hour") === "24" ? "00" : g("hour");
+  return `${hh}:${g("minute")}`;
 }
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+/** Current Colombo calendar date as YYYY-MM-DD. */
+export function todayISO(): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const g = (t: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === t)?.value ?? "";
+  return `${g("year")}-${g("month")}-${g("day")}`;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -119,7 +149,9 @@ function parseMonthKey(monthKey: string): { from: Date; to: Date } | null {
     return mk(now.getUTCFullYear(), now.getUTCMonth());
   }
   if (monthKey === "last") {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const d = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1),
+    );
     return mk(d.getUTCFullYear(), d.getUTCMonth());
   }
 
@@ -134,8 +166,18 @@ function parseMonthKey(monthKey: string): { from: Date; to: Date } | null {
 
   // Short month keys (jan..dec) — assume current year
   const shortMonths = [
-    "jan", "feb", "mar", "apr", "may", "jun",
-    "jul", "aug", "sep", "oct", "nov", "dec",
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "may",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
   ];
   const idx = shortMonths.indexOf(monthKey.toLowerCase());
   if (idx >= 0) return mk(now.getUTCFullYear(), idx);
@@ -212,7 +254,9 @@ async function fetchActiveEmployeeCount(): Promise<number> {
 
 router.get("/admin", async (req: Request, res: Response) => {
   try {
-    const monthKey = String(req.query.month ?? "current").trim().toLowerCase();
+    const monthKey = String(req.query.month ?? "current")
+      .trim()
+      .toLowerCase();
 
     const range = parseMonthKey(monthKey);
     if (!range) {
@@ -227,11 +271,25 @@ router.get("/admin", async (req: Request, res: Response) => {
     const monthLabel = monthLabelFromKey(monthKey, from);
 
     // Previous month range (for delta comparisons)
-    const prevFrom = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() - 1, 1));
-    const prevTo = new Date(Date.UTC(prevFrom.getUTCFullYear(), prevFrom.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+    const prevFrom = new Date(
+      Date.UTC(from.getUTCFullYear(), from.getUTCMonth() - 1, 1),
+    );
+    const prevTo = new Date(
+      Date.UTC(
+        prevFrom.getUTCFullYear(),
+        prevFrom.getUTCMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999,
+      ),
+    );
 
     // For the trend chart, load the last 5 months (including target)
-    const trendFrom = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() - 4, 1));
+    const trendFrom = new Date(
+      Date.UTC(from.getUTCFullYear(), from.getUTCMonth() - 4, 1),
+    );
 
     const [activeEmployees, currentTx, prevTx, trendTx] = await Promise.all([
       fetchActiveEmployeeCount(),
@@ -239,7 +297,10 @@ router.get("/admin", async (req: Request, res: Response) => {
       prisma.transaction.findMany({
         where: {
           active: true,
-          date: { gte: from.toISOString().slice(0, 10), lte: to.toISOString().slice(0, 10) },
+          date: {
+            gte: from.toISOString().slice(0, 10),
+            lte: to.toISOString().slice(0, 10),
+          },
         },
       }),
 
@@ -326,23 +387,30 @@ router.get("/admin", async (req: Request, res: Response) => {
     // ---- Trend: last 5 months buckets ------------------------------------
     const trendBuckets = new Map<string, number>();
     for (let i = 4; i >= 0; i--) {
-      const d = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() - i, 1));
+      const d = new Date(
+        Date.UTC(from.getUTCFullYear(), from.getUTCMonth() - i, 1),
+      );
       const key = d.toISOString().slice(0, 7); // YYYY-MM
       trendBuckets.set(key, 0);
     }
     for (const tx of trendTx) {
       const key = dateStringToMonthKey(tx.date);
       if (trendBuckets.has(key)) {
-        trendBuckets.set(key, (trendBuckets.get(key) ?? 0) + Number(tx.cost ?? 0));
+        trendBuckets.set(
+          key,
+          (trendBuckets.get(key) ?? 0) + Number(tx.cost ?? 0),
+        );
       }
     }
-    const monthlyTrend = Array.from(trendBuckets.entries()).map(([key, cost]) => {
-      const [y, m] = key.split("-").map(Number);
-      const label = new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-US", {
-        month: "short",
-      });
-      return { month: label, cost };
-    });
+    const monthlyTrend = Array.from(trendBuckets.entries()).map(
+      ([key, cost]) => {
+        const [y, m] = key.split("-").map(Number);
+        const label = new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-US", {
+          month: "short",
+        });
+        return { month: label, cost };
+      },
+    );
 
     return res.json({
       success: true,
@@ -404,8 +472,8 @@ router.get("/user/:userId", async (req: Request, res: Response) => {
     /* ------------------------------------------------------------------ */
     /* 2. Load reference data in parallel                                  */
     /* ------------------------------------------------------------------ */
-    const today = todayISO();
-    const now = nowHHMM();
+    const today = todayISO(); // <- now Colombo date
+    const now = nowHHMM(); // <- now Colombo HH:mm
 
     const [allMeals, deptQuotaMap, userTransactions, todayUserTx] =
       await Promise.all([
@@ -596,7 +664,7 @@ router.get("/user/:userId", async (req: Request, res: Response) => {
 router.get("/canteen", async (req: Request, res: Response) => {
   try {
     const canteenId = String(req.query.canteenId ?? "").trim();
-    const date = String(req.query.date ?? todayISO()).trim(); // defaults to today
+    const date = String(req.query.date ?? todayISO()).trim(); // defaults to today (Colombo)
 
     /* ------------------------------------------------------------------ */
     /* 1. Today's meal issued count (from Transaction)                    */
