@@ -45,10 +45,25 @@ export function nowInColombo(): { time: string; date: string } {
   };
 }
 
+/** "12:00", "9:5", " 12:00 ", "12:00:00" → "12:00" (Colombo wall clock, no TZ math). */
+export function normalizeHHmm(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  const s = String(raw).trim();
+  const m = /^(\d{1,2}):(\d{1,2})(?::\d{1,2})?$/.exec(s);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
 export function isInWindow(now: string, from: string, to: string): boolean {
-  if (!from || !to) return false;
-  if (from <= to) return now >= from && now <= to;
-  return now >= from || now <= to;
+  const n = normalizeHHmm(now);
+  const f = normalizeHHmm(from);
+  const t = normalizeHHmm(to);
+  if (!n || !f || !t) return false;
+  if (f <= t) return n >= f && n <= t;
+  return n >= f || n <= t; // overnight window
 }
 
 /** "27" / "EMP-027" / " emp-27 " → "27". Used for dedupe only. */
@@ -144,7 +159,10 @@ router.get("/active", async (req: Request, res: Response) => {
     if (activeMeals.length === 0) {
       reason = "No meal window is currently open.";
     } else if (filtered.length === 0 && excludeIssued) {
-      reason = "This employee has already received " + activeMeals.map((m) => m.name).join(", ") + " today.";
+      reason =
+        "This employee has already received " +
+        activeMeals.map((m) => m.name).join(", ") +
+        " today.";
     }
 
     res.json({
@@ -168,14 +186,22 @@ router.post("/", async (req: Request, res: Response) => {
         .status(400)
         .json({ success: false, message: "All fields are required" });
     }
+    const from = normalizeHHmm(eligibleFrom);
+    const to = normalizeHHmm(eligibleTo);
+    if (!from || !to) {
+      return res.status(400).json({
+        success: false,
+        message: "eligibleFrom/eligibleTo must be HH:mm (Colombo time)",
+      });
+    }
     const actor = actorOf(req);
     const newMeal: Meal = {
       id: `mel-${Date.now()}`,
       code,
       name,
       cost: Number(cost),
-      eligibleFrom,
-      eligibleTo,
+      eligibleFrom: from,
+      eligibleTo: to,
       createdBy: actor ?? undefined,
       updatedBy: actor ?? undefined,
     } as Meal;
@@ -192,11 +218,32 @@ router.post("/", async (req: Request, res: Response) => {
 
 router.put("/:id", async (req: Request, res: Response) => {
   try {
-    const updated = await updateMeal(req.params.id, {
+    const patch: any = {
       ...req.body,
       id: req.params.id,
       updatedBy: actorOf(req) ?? undefined,
-    });
+    };
+    if (patch.eligibleFrom !== undefined) {
+      const f = normalizeHHmm(patch.eligibleFrom);
+      if (!f) {
+        return res.status(400).json({
+          success: false,
+          message: "eligibleFrom must be HH:mm (Colombo time)",
+        });
+      }
+      patch.eligibleFrom = f;
+    }
+    if (patch.eligibleTo !== undefined) {
+      const t = normalizeHHmm(patch.eligibleTo);
+      if (!t) {
+        return res.status(400).json({
+          success: false,
+          message: "eligibleTo must be HH:mm (Colombo time)",
+        });
+      }
+      patch.eligibleTo = t;
+    }
+    const updated = await updateMeal(req.params.id, patch);
     if (!updated) {
       return res
         .status(404)
